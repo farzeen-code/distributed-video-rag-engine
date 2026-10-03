@@ -37,11 +37,12 @@ def build_prompt(query: str, context_chunks: list[str], history: list[dict]) -> 
         User Question: {query}
 
         Instructions:
-        1. Answer the user's question using the document context.
-        2. If the user asks for a factual detail that is missing, politely say you cannot find it.
-        3. IMPORTANT: If the user asks an evaluative or subjective question (e.g., "what is the best...", "compare these...", "summarize"), you MUST use your analytical reasoning to evaluate the provided context and make a judgment call. Explain the rationale behind your choice.
-        4. Be concise and directly address the user's question without unnecessary preamble or repetitive elaboration."
-        5. Use Markdown formatting (bolding, bullet points) to make your answer easy to read."""
+        1. Answer the user's question accurately using ONLY the provided context.
+        2. Video Timestamps: If the context contains video timestamp brackets like [MM:SS - MM:SS] or [MM:SS], you MUST explicitly cite the exact timestamp in your answer (e.g., "At [04:15], the speaker explains..."). This allows the user to jump directly to that point in the video.
+        3. Strict Grounding: Never guess, extrapolate, or invent timestamps. If a fact is present without a timestamp, state the fact without inventing a time.
+        4. Missing Information: If the context does not contain the answer, politely state that the information is not covered in the provided documents or video.
+        5. Analytical Questions: If the user asks for a comparison, summary, or subjective judgment, evaluate the provided context thoroughly and explain the rationale behind your conclusions.
+        6. Formatting: Use Markdown formatting (bolding, bullet points, clean quotes) to make timestamps and key takeaways immediately readable."""
 
     return prompt
 
