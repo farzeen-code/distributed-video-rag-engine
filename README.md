@@ -68,3 +68,108 @@ graph TD
     API --> Chroma
     Chroma -->|Retrieved Timestamped Chunks| Gemini[Google Gemini LLM Engine]
     Gemini -->|Answer with MM:SS Citations| Client
+```
+
+---
+
+## 🛠️ Tech Stack
+
+| Component | Technology | Purpose |
+| :--- | :--- | :--- |
+| **API Gateway** | **FastAPI** | High-performance asynchronous REST routing & streaming |
+| **Task Queue & Broker** | **Redis** | In-memory message broker & task state store |
+| **Distributed Worker** | **Celery** | Isolated background process execution |
+| **Media Processing** | **FFmpeg** | Binary subprocess audio extraction (16kHz mono WAV) |
+| **Speech Recognition** | **faster-whisper** | INT8 CTranslate2 CPU model for timestamped transcription |
+| **Vector Database** | **ChromaDB** | Local persistent dense vector database |
+| **Embedding Engine** | **ONNX Runtime** | `all-MiniLM-L6-v2` dense vectors (384-dimensional) |
+| **LLM Inference** | **Google GenAI SDK** | Resilient Gemini Flash-Lite citation engine |
+| **Containerization** | **Docker & Docker Compose** | Multi-container microservice orchestration |
+
+---
+
+## 📡 API Endpoints
+
+### 1. Video Ingestion & Polling
+
+#### `POST /upload-video`
+Streams video file to storage and enqueues background processing.
+- **Form Data**: `file` (`.mp4`, `.mkv`, `.mov`, `.webm`, `.avi`)
+- **Response ($<200\text{ms}$)**:
+```json
+{
+  "status": "queued",
+  "task_id": "39ca2ffe-f378-427a-8593-d8f986697780",
+  "filename": "lecture.mp4",
+  "check_status_url": "/tasks/39ca2ffe-f378-427a-8593-d8f986697780"
+}
+```
+
+#### `GET /tasks/{task_id}`
+Polls Celery background worker progress.
+- **Response**:
+```json
+{
+  "task_id": "39ca2ffe-f378-427a-8593-d8f986697780",
+  "state": "PROCESSING",
+  "progress": 40,
+  "step": "Transcribing audio with Whisper"
+}
+```
+
+---
+
+### 2. Temporal Citation Querying
+
+#### `POST /query`
+Queries indexed document and video knowledge base.
+- **Body**:
+```json
+{
+  "session_id": "session_123",
+  "question": "When did the lecturer explain database indexing?"
+}
+```
+- **Response**:
+```json
+{
+  "answer": "At [04:15 - 04:45], the lecturer explains that database indexing uses B-Trees to minimize disk block reads...",
+  "sources": [
+    "[04:15 - 04:45] In this section, database indexing is introduced using B-Trees..."
+  ]
+}
+```
+
+---
+
+## 🚀 Quickstart (Single Command)
+
+### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed & running.
+- A [Google AI Studio Gemini API Key](https://aistudio.google.com/).
+
+### 1. Clone & Configure
+```bash
+git clone https://github.com/YOUR_USERNAME/distributed-video-rag-engine.git
+cd distributed-video-rag-engine
+
+# Create .env file
+echo "GEMINI_API_KEY=your_gemini_api_key_here" > .env
+```
+
+### 2. Boot the Cluster
+```bash
+docker compose up --build
+```
+
+Access the interactive API documentation at: **`http://localhost:8000/docs`**
+
+---
+
+## 📄 License
+Distributed under the MIT License.
+```
+
+---
+
+Save `README.md`, commit your changes with git, and push to GitHub! Your repository will look like a professional backend project.
