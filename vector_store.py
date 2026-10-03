@@ -8,7 +8,7 @@ def get_collection():
     client = chromadb.PersistentClient(path="chroma_db")
     return client.get_or_create_collection(
         name="documents",
-        embedding_function=get_embedding_function
+        embedding_function=get_embedding_function()
     )
 
 small_doc_threshold = 200
