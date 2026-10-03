@@ -4,11 +4,12 @@ import chromadb
 from embeddings import get_embedding_function, chunk_text
 from memory import db
 
-Client = chromadb.PersistentClient(path="chroma_db")
-collection = Client.get_or_create_collection(
-    name="documents",
-    embedding_function=get_embedding_function()
-)
+def get_collection():
+    client = chromadb.PersistentClient(path="chroma_db")
+    return client.get_or_create_collection(
+        name="documents",
+        embedding_function=get_embedding_function
+    )
 
 small_doc_threshold = 200
 
@@ -18,6 +19,7 @@ def add_chunk(chunks, filename):
     if not chunks:
         return
 
+    collection=get_collection()
     collection.delete(where={"source": filename})
     
     # Process embeddings in small batches to keep memory overhead flat (<20MB)
@@ -34,6 +36,7 @@ def add_chunk(chunks, filename):
     collection.upsert(documents=chunks, embeddings=all_embeddings, ids=ids, metadatas=metadatas)
 
 def retrieve(question: str, filename: str=None, top_k: int=5, max_distance: float=1.25) -> list[str]:
+    collection=get_collection()
     where_filter = {"source": filename.lower()} if filename else None
 
     results = collection.query(
@@ -63,6 +66,7 @@ def retrieve(question: str, filename: str=None, top_k: int=5, max_distance: floa
     return filtered_chunks 
 
 def store_document(text, filename):
+    collection=get_collection()
     if filename:
         filename = filename.lower()
     word_count = len(text.split())
@@ -87,6 +91,7 @@ def store_document(text, filename):
         return word_count, False
 
 def delete_document(filename):
+    collection=get_collection()
     filename = filename.lower()
     collection.delete(where={"source": filename})
     small_docs.delete_one({"filename": filename})
