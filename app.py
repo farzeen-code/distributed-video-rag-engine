@@ -1,4 +1,7 @@
 import io
+import os
+import uuid
+import shutil
 import gc
 import docx
 import time
@@ -11,8 +14,17 @@ from memory import add_message, get_history, init_db
 from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from celery.result import AsyncResult
+from pathlib import Path
+from tasks import celery_app, process_video_task
 
 MAX_FILE_SIZE = 5 * 1024 * 1024
+
+STORAGE_DIR = Path("storage/videos")
+STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+ALLOWED_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
+MAX_VIDEO_SIZE = 500 * 1024 * 1024
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,6 +56,77 @@ class QueryRequest(BaseModel):
     question: str
     filename: Optional[str] = None
 
+@app.post("/upload-video")
+async def upload_video_endpoint(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+    
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail= f"Unsupported video format '{file_ext}'. \nAllowed: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
+        
+    unique_filename = f"{uuid.uuid4().hex}_{file.filename.lower()}"
+    DEST_PATH = STORAGE_DIR / unique_filename
+
+    try:
+        with open(DEST_PATH, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save video: {str(e)}")
+    finally:
+        await file.close()
+        
+    file_size = os.path.getsize(DEST_PATH)
+    if file_size > MAX_VIDEO_SIZE:
+        os.remove(DEST_PATH)
+        raise HTTPException(status_code=413, detail=f"File size is not allowed to exceed 500MB.")
+    
+    task = process_video_task.delay(str(DEST_PATH), file.filename.lower())
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "filename": file.filename.lower(),
+        "check_status_url": f"/tasks/{task.id}"
+    }
+    
+@app.get("/tasks/{task_id}")
+def get_task_status(task_id: str):
+    try:
+        uuid.UUID(task_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid task_id format. Must be a valid UUID")
+    
+    task_result = AsyncResult(task_id, app=celery_app)
+    
+    response = {
+        "task_id": task_id,
+        "state": task_result.state,
+    }
+    
+    if task_result.state == "PENDING":
+        response["progress"] = 0
+        response["message"] = "Task is queued and waiting for a worker."
+    
+    elif task_result.state == "PROCESSING":
+        meta = task_result.info if isinstance(task_result.info, dict) else {}
+        response["progress"] = meta.get("progress", 25)                        #Looks up progress in self.update_state, otherwise just shows 25% done
+        response["message"] = meta.get("step", "Processing video.....")
+        
+    elif task_result.state == "SUCCESS":
+            meta = task_result.info if isinstance(task_result.info, dict) else {}
+            response["progress"] = 100                        
+            response["result"] = task_result.result
+    
+    elif task_result.state == "FAILURE":
+        response["progress"] = 0
+        response["error"] = str(task_result.info)
+    
+    return response
+    
+    
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
     content = await file.read()
