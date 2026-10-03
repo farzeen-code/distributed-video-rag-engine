@@ -9,3 +9,6 @@ pymongo
 certifi
 python-dotenv
 truststore
+celery
+redis
+faster-whisper
