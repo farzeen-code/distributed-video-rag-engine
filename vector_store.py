@@ -1,8 +1,41 @@
+import os
 import hashlib
 import re
 import chromadb
+from google import genai
 from embeddings import get_embedding_function, chunk_text
 from memory import db
+
+
+ai_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+def is_summary_intent(query: str) -> bool:
+    """
+    Uses a fast 100ms LLM call to dynamically detect if the user
+    wants a full overview/rundown vs a pinpoint fact.
+    No hardcoded keywords!
+    """
+    
+    prompt = f""" Classify the user's intent into exactly one word: 'SUMMARY' or 'PINPOINT'.
+                - 'SUMMARY': If asking for an overview, full list of points/advice, outline, complete rundown, or general gist.
+                - 'PINPOINT': If asking about a specific detail, single fact, specific quote, or focused topic.
+                Question: "{query}"
+                Answer with ONLY the word 'SUMMARY' or 'PINPOINT':
+    """
+    
+    try:
+        response = ai_client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=prompt
+        )
+        
+        classification = response.text.strip().upper()
+        print(f"[Router] intent classified as {classification}")
+        return "SUMMARY" in classification
+    
+    except Exception as e:
+        print(f"[Router] fallback to pinpoint due to error: {e}")
+        return False
 
 def get_collection():
     client = chromadb.PersistentClient(path="chroma_db")
@@ -65,6 +98,27 @@ def retrieve(question: str, filename: str=None, top_k: int=5, max_distance: floa
     
     return filtered_chunks 
 
+def get_full_transcript(filename: str) -> list[str]:
+    
+    """
+    Retrieves the complete, chronological transcript of a video or document.
+    Use this tool when the user wants an overview, full list of instructions/advice,
+    or a comprehensive summary of everything in the video.
+    """                     
+    
+    collection = get_collection()
+    if not filename:
+        return []
+    
+    results = collection.get(
+        where={"source": filename.lower()},
+        include=["documents"]
+    )
+    
+    docs = results.get("documents", [])
+    print(f"[Tool] get_full_transcript retrieved all {len(docs)} segments for {filename} ")
+    return docs
+
 def store_document(text, filename):
     collection=get_collection()
     if filename:
@@ -108,6 +162,13 @@ def get_context(query, filename):
             return [small_doc["text"]]
 
         print(f"Not found in small_documents, Checking chromaDB.....\n")
-    results = retrieve(query, filename)
-    print(f"ChromaDb returned {len(results)} chunks")
+        
+    if filename and is_summary_intent(query):
+        print(f"User requested full overview for '{filename}'. Fetching all transcript chunks...")
+        all_chunks = get_full_transcript(filename)
+        if all_chunks:
+            return all_chunks
+    
+    print(f"[Router] User requested specific detail. Running top-5 vector similarity search")    
+    results = retrieve(query, filename, top_k=5)
     return results

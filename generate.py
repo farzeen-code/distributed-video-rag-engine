@@ -42,7 +42,9 @@ def build_prompt(query: str, context_chunks: list[str], history: list[dict]) -> 
         3. Strict Grounding: Never guess, extrapolate, or invent timestamps. If a fact is present without a timestamp, state the fact without inventing a time.
         4. Missing Information: If the context does not contain the answer, politely state that the information is not covered in the provided documents or video.
         5. Analytical Questions: If the user asks for a comparison, summary, or subjective judgment, evaluate the provided context thoroughly and explain the rationale behind your conclusions.
-        6. Formatting: Use Markdown formatting (bolding, bullet points, clean quotes) to make timestamps and key takeaways immediately readable."""
+        6. Formatting: Use Markdown formatting (bolding, bullet points, clean quotes) to make timestamps and key takeaways immediately readable.
+        7. Completeness Disclaimer: The provided context contains retrieved search snippets, not necessarily the entire document or video. If summarizing or listing points, phrase your answer as 'Based on the retrieved excerpts, here are the instructions mentioned...' rather than implying this is the complete, exhaustive list."""
+        
 
     return prompt
 
@@ -76,7 +78,7 @@ def generate_answer(query: str, context_chunks: list[str], history: list[dict]) 
                 return response.text
             print(f"⚠️ Empty response from {model_name}")
             continue
-        
+            
         except Exception as e:
             err_msg = str(e).lower()
             if "timeout" in err_msg:

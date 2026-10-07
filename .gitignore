@@ -6,3 +6,6 @@ teste.py
 *.pyc
 .vscode/
 .freebuff/
+storage/
+*.wav
+*.mp4
