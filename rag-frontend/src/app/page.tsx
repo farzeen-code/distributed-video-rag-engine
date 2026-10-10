@@ -46,14 +46,13 @@ export default function Home() {
   const [serverError, setServerError] = useState(false);
   const [retryCountdown, setRetryCountdown] = useState(0);
   const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pendingQuestion = useRef<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Jump and play video at specific second
+  // Jump and play video at specific timestamp second
   const handleSeek = (seconds: number) => {
     if (videoRef.current) {
       videoRef.current.currentTime = seconds;
@@ -72,7 +71,6 @@ export default function Home() {
 
     const isVideo = /\.(mp4|mkv|mov|avi|webm)$/i.test(selectedFile.name);
 
-    // Create local blob preview URL for video scrubbing
     if (isVideo) {
       const blobUrl = URL.createObjectURL(selectedFile);
       setVideoBlobUrl(blobUrl);
@@ -85,7 +83,7 @@ export default function Home() {
 
     // ── VIDEO PIPELINE ──
     if (isVideo) {
-      setUploadStatus("Uploading video stream...");
+      setUploadStatus("Uploading video...");
       setVideoProgress(15);
       setVideoStep("Extracting audio with FFmpeg");
 
@@ -121,7 +119,7 @@ export default function Home() {
                 mode: "video",
                 type: "video",
               });
-              setUploadStatus("Video transcribed & indexed!");
+              setUploadStatus("Video indexed successfully.");
               setTimeout(() => {
                 setUploadStatus("");
                 setVideoProgress(0);
@@ -147,7 +145,7 @@ export default function Home() {
     }
 
     // ── DOCUMENT PIPELINE ──
-    setUploadStatus("Uploading & indexing document...");
+    setUploadStatus("Indexing document...");
 
     try {
       const res = await fetch(`${API_URL}/upload`, {
@@ -162,14 +160,14 @@ export default function Home() {
           mode: data.mode,
           type: "document",
         });
-        setUploadStatus("Document indexed successfully!");
+        setUploadStatus("Document indexed successfully.");
         setTimeout(() => setUploadStatus(""), 3000);
         setSidebarOpen(false);
       } else {
         setUploadStatus(`Error: ${data.detail || "Upload failed"}`);
       }
     } catch {
-      setUploadStatus("Error: Could not connect to backend");
+      setUploadStatus("Error: Could not reach backend");
     } finally {
       setIsUploading(false);
     }
@@ -253,7 +251,7 @@ export default function Home() {
           ...prev,
           {
             role: "assistant",
-            content: "⚠️ Unable to get a response. Please check backend connection.",
+            content: "⚠️ Unable to get a response. Please check server.",
           },
         ]);
       }
@@ -263,61 +261,54 @@ export default function Home() {
   };
 
   const quickPrompts = [
-    "📋 Give me a full summary of all points",
-    "⏱️ What are the key moments and advice?",
-    "💡 What are the core takeaways?",
+    "Full overview of all advice and instructions",
+    "What are the key moments and timestamps?",
+    "Summarize the main takeaways",
   ];
 
   return (
-    <div className="h-screen flex bg-zinc-950 text-zinc-100 overflow-hidden font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
+    <div className="h-screen flex bg-[#0c0c0e] text-[#ededed] overflow-hidden font-sans selection:bg-amber-400/20 selection:text-amber-200">
 
       {/* ── Mobile Overlay ── */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-30 md:hidden transition-opacity"
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-30 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* ── Sleek Sidebar ── */}
+      {/* ── Matte Charcoal Sidebar ── */}
       <aside
         className={`
-          fixed top-0 left-0 h-full z-40 w-80 bg-zinc-900/90 backdrop-blur-xl border-r border-zinc-800/80
+          fixed top-0 left-0 h-full z-40 w-80 bg-[#121215] border-r border-[#1f1f23]
           flex flex-col shrink-0 transition-transform duration-300 ease-out
           md:relative md:translate-x-0 md:w-72 md:z-auto
           ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
         `}
       >
         {/* Brand Header */}
-        <div className="p-5 border-b border-zinc-800/80 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/20">
-              <div className="w-full h-full bg-zinc-950 rounded-[10px] flex items-center justify-center">
-                <span className="text-base font-bold bg-gradient-to-r from-indigo-300 to-cyan-300 bg-clip-text text-transparent">
-                  ⚡
-                </span>
-              </div>
-            </div>
-            <div>
-              <h1 className="text-sm font-bold tracking-tight text-white flex items-center gap-1.5">
-                Nexus RAG
-                <span className="text-[10px] bg-indigo-500/10 text-indigo-400 font-mono px-1.5 py-0.5 rounded border border-indigo-500/20">
-                  v2.0
-                </span>
+        <div className="p-6 border-b border-[#1f1f23] flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-white font-sans">
+                DocAI
               </h1>
-              <p className="text-[11px] text-zinc-400">Multimodal Video & Doc Intelligence</p>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
             </div>
+            <p className="text-[10px] text-[#71717a] uppercase tracking-widest mt-1 font-mono">
+              Intelligence Studio
+            </p>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}
-            className="md:hidden p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+            className="md:hidden text-[#71717a] hover:text-white p-1"
           >
             ✕
           </button>
         </div>
 
         {/* Upload Zone */}
-        <div className="p-4 border-b border-zinc-800/80">
+        <div className="p-5 border-b border-[#1f1f23]">
           <label className="w-full block group cursor-pointer">
             <input
               type="file"
@@ -332,39 +323,38 @@ export default function Home() {
                 }
               }}
             />
-            <div className="relative overflow-hidden rounded-xl bg-gradient-to-b from-zinc-800 to-zinc-900 p-3.5 border border-zinc-700/60 hover:border-indigo-500/50 transition-all duration-200 group-hover:shadow-lg group-hover:shadow-indigo-500/10">
-              <div className="flex items-center justify-center gap-2.5 text-xs font-semibold text-zinc-200 group-hover:text-white">
-                {isUploading ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4 text-indigo-400" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    <span>Ingesting Media...</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-base">📁</span>
-                    <span>Upload Video or Document</span>
-                  </>
-                )}
+            <div className="rounded-lg bg-[#18181c] p-4 border border-[#27272c] hover:border-amber-400/50 transition-all duration-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 text-xs font-medium text-[#d4d4d8] group-hover:text-white">
+                  {isUploading ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5 text-amber-400" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      <span>Ingesting Media...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-sm text-amber-400">+</span>
+                      <span>Upload Video or Document</span>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </label>
 
-          {/* Glowing Animated Progress Bar */}
+          {/* Minimalist Gold Progress Line (Inspired by Aer "/ 01" indicator) */}
           {videoProgress > 0 && (
-            <div className="mt-3 bg-zinc-950/60 border border-zinc-800 p-2.5 rounded-xl">
-              <div className="flex justify-between items-center text-[11px] mb-1.5">
-                <span className="text-indigo-400 font-medium truncate max-w-[180px] flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping"></span>
-                  {videoStep}
-                </span>
-                <span className="font-mono text-zinc-300 font-semibold">{videoProgress}%</span>
+            <div className="mt-3.5 bg-[#18181c] border border-[#27272c] p-3 rounded-lg">
+              <div className="flex justify-between items-center text-[10px] mb-2 font-mono">
+                <span className="text-amber-300 truncate max-w-[170px] uppercase tracking-wider">{videoStep}</span>
+                <span className="text-[#a1a1aa]">/ {videoProgress}%</span>
               </div>
-              <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="h-[2px] bg-[#27272c] overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-400 transition-all duration-300 rounded-full shadow-sm shadow-indigo-500/50"
+                  className="h-full bg-amber-400 transition-all duration-300"
                   style={{ width: `${videoProgress}%` }}
                 />
               </div>
@@ -372,129 +362,111 @@ export default function Home() {
           )}
 
           {uploadStatus && !videoProgress && (
-            <p className={`text-xs text-center mt-2.5 font-medium ${
-              uploadStatus.includes("Error") ? "text-rose-400" : "text-emerald-400"
+            <p className={`text-[11px] text-center mt-3 font-mono ${
+              uploadStatus.includes("Error") ? "text-rose-400" : "text-amber-300"
             }`}>
               {uploadStatus}
             </p>
           )}
         </div>
 
-        {/* Loaded Document / Video Card */}
+        {/* Active Source Card */}
         {uploadedFile && (
-          <div className="p-4 border-b border-zinc-800/80">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+          <div className="p-5 border-b border-[#1f1f23]">
+            <div className="flex items-center justify-between text-[10px] font-mono text-[#71717a] uppercase tracking-widest mb-2.5">
               <span>Active Source</span>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                uploadedFile.type === "video"
-                  ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
-                  : "bg-blue-500/20 text-blue-300 border border-blue-500/30"
-              }`}>
-                {uploadedFile.type === "video" ? "🎬 VIDEO" : "📄 DOC"}
+              <span className="text-amber-400">
+                {uploadedFile.type === "video" ? "VIDEO" : "DOCUMENT"}
               </span>
             </div>
-            <div className="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3 flex items-start justify-between gap-2.5 shadow-sm">
+            <div className="bg-[#18181c] border border-[#27272c] rounded-lg p-3.5 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-xs font-semibold text-zinc-100 truncate">{uploadedFile.name}</p>
-                <p className="text-[11px] text-zinc-400 mt-0.5 font-mono">
+                <p className="text-xs font-medium text-white truncate">{uploadedFile.name}</p>
+                <p className="text-[10px] text-[#71717a] mt-1 font-mono">
                   {uploadedFile.type === "video"
-                    ? `${uploadedFile.wordCount} chunks · Timestamps active`
-                    : `${uploadedFile.wordCount.toLocaleString()} words · Indexed`}
+                    ? `${uploadedFile.wordCount} segments indexed`
+                    : `${uploadedFile.wordCount.toLocaleString()} words indexed`}
                 </p>
               </div>
               <button
                 onClick={handleDelete}
-                className="text-zinc-500 hover:text-rose-400 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
-                title="Remove source"
+                className="text-[#71717a] hover:text-white p-1 transition-colors"
+                title="Remove file"
               >
                 ✕
               </button>
             </div>
           </div>
         )}
-
-        {/* Quick System Info Footer */}
-        <div className="mt-auto p-4 border-t border-zinc-800/80 bg-zinc-950/40">
-          <div className="flex items-center justify-between text-[11px] text-zinc-400 mb-1">
-            <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              Celery + Redis
-            </span>
-            <span className="font-mono text-zinc-400">{sessionId.slice(0, 11)}</span>
-          </div>
-        </div>
       </aside>
 
-      {/* ── Main Chat & Intelligence Canvas ── */}
-      <main className="flex-1 flex flex-col min-w-0 h-full bg-zinc-950">
+      {/* ── Main Canvas ── */}
+      <main className="flex-1 flex flex-col min-w-0 h-full bg-[#0c0c0e]">
 
-        {/* Top Navbar */}
-        <header className="px-5 py-3.5 border-b border-zinc-800/80 bg-zinc-900/50 backdrop-blur-md flex items-center justify-between shrink-0">
+        {/* Minimalist Top Bar */}
+        <header className="px-6 py-4 border-b border-[#1f1f23] bg-[#121215]/60 backdrop-blur-md flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="md:hidden p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              className="md:hidden text-[#71717a] hover:text-white p-1"
             >
               ☰
             </button>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-zinc-200">
-                  {uploadedFile ? uploadedFile.name : "Interactive Knowledge Workspace"}
+            <div className="flex items-center gap-2.5">
+              <span className="text-xs font-mono text-[#a1a1aa]">
+                {uploadedFile ? uploadedFile.name : "Workspace"}
+              </span>
+              {uploadedFile && (
+                <span className="text-[9px] font-mono uppercase bg-amber-400/10 text-amber-300 border border-amber-400/20 px-1.5 py-0.5 rounded">
+                  Active
                 </span>
-                {uploadedFile && (
-                  <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.2 rounded-full font-medium">
-                    Ready to Query
-                  </span>
-                )}
-              </div>
+              )}
             </div>
           </div>
         </header>
 
-        {/* Message Area & Video Panel */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 max-w-4xl w-full mx-auto">
+        {/* Message Area & Video */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 max-w-4xl w-full mx-auto">
 
-          {/* Embedded Video Player Panel (Shows when a video is loaded) */}
+          {/* Embedded Video Player Panel */}
           {videoBlobUrl && (
-            <div className="bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-800 rounded-2xl p-3.5 shadow-2xl">
-              <div className="flex items-center justify-between mb-2 px-1">
-                <span className="text-xs font-semibold text-zinc-300 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
-                  Interactive Video Player
+            <div className="bg-[#121215] border border-[#1f1f23] rounded-xl p-4 shadow-2xl">
+              <div className="flex items-center justify-between mb-2.5 px-0.5">
+                <span className="text-[11px] font-mono text-[#a1a1aa] uppercase tracking-wider flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                  Video Preview
                 </span>
-                <span className="text-[11px] text-zinc-400">Click any timestamp in answers to scrub video</span>
+                <span className="text-[10px] font-mono text-[#71717a]">Click citations below to scrub player</span>
               </div>
               <video
                 ref={videoRef}
                 src={videoBlobUrl}
                 controls
-                className="w-full max-h-64 rounded-xl bg-black object-contain border border-zinc-800/80 shadow-inner"
+                className="w-full max-h-72 rounded-lg bg-black object-contain border border-[#1f1f23]"
               />
             </div>
           )}
 
           {/* Empty State */}
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center min-h-[50vh] text-center px-4">
-              <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-3xl mb-4 shadow-xl">
-                ⚡
-              </div>
-              <h2 className="text-lg font-bold text-zinc-100 mb-1">
-                {uploadedFile ? `Chat with ${uploadedFile.name}` : "Upload a Video or Document to Begin"}
+            <div className="flex flex-col items-center justify-center min-h-[55vh] text-center px-4">
+              <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-white mb-3">
+                {uploadedFile ? "Ask Anything." : "Work Anywhere."}
               </h2>
-              <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-6">
-                Ask deep factual questions or request complete summaries. Spoken video points are cited with scrubbable timestamps.
+              <p className="text-xs md:text-sm text-[#71717a] max-w-md leading-relaxed mb-8">
+                {uploadedFile
+                  ? "Query specific timestamps or request a complete synthesis."
+                  : "Upload a document or video to begin intelligent retrieval with timestamp citations."}
               </p>
 
-              {/* Quick Action Pills */}
+              {/* Minimalist Quick Prompt Pills */}
               {uploadedFile && (
-                <div className="flex flex-wrap gap-2 justify-center max-w-xl">
+                <div className="flex flex-wrap gap-2 justify-center max-w-lg">
                   {quickPrompts.map((prompt, i) => (
                     <button
                       key={i}
                       onClick={() => handleAsk(prompt)}
-                      className="text-xs bg-zinc-900 hover:bg-zinc-800/80 border border-zinc-800 hover:border-indigo-500/40 text-zinc-300 hover:text-white px-3.5 py-2 rounded-xl transition-all duration-200 cursor-pointer shadow-sm"
+                      className="text-xs bg-[#121215] hover:bg-[#18181c] border border-[#27272c] hover:border-amber-400/40 text-[#a1a1aa] hover:text-white px-4 py-2 rounded-lg transition-all duration-200 cursor-pointer"
                     >
                       {prompt}
                     </button>
@@ -513,25 +485,25 @@ export default function Home() {
             ))
           )}
 
-          {/* Typing Indicator */}
+          {/* Typing indicator */}
           {isAsking && (
-            <div className="flex gap-3 items-center text-xs text-indigo-400 bg-zinc-900/60 border border-zinc-800/60 w-fit px-4 py-2.5 rounded-full">
-              <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
-              Synthesizing response with Gemini...
+            <div className="flex gap-2 items-center text-xs font-mono text-amber-300/80 bg-[#121215] border border-[#1f1f23] w-fit px-3.5 py-2 rounded-lg">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+              Synthesizing...
             </div>
           )}
 
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Chat Input Bar */}
-        <div className="p-4 border-t border-zinc-800/80 bg-zinc-900/60 backdrop-blur-md shrink-0">
+        {/* Minimalist Input Bar */}
+        <div className="p-4 md:p-6 border-t border-[#1f1f23] bg-[#0c0c0e] shrink-0">
           <form
             onSubmit={(e) => {
               e.preventDefault();
               handleAsk();
             }}
-            className="max-w-4xl mx-auto flex gap-2.5"
+            className="max-w-4xl mx-auto flex gap-3"
           >
             <input
               type="text"
@@ -540,17 +512,17 @@ export default function Home() {
               placeholder={
                 uploadedFile
                   ? `Ask about ${uploadedFile.name}...`
-                  : "Upload a video or document to start..."
+                  : "Upload a file to start..."
               }
               disabled={isAsking}
-              className="flex-1 bg-zinc-950 border border-zinc-800 focus:border-indigo-500 rounded-xl px-4 py-3 text-xs md:text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none transition-colors"
+              className="flex-1 bg-[#121215] border border-[#1f1f23] focus:border-amber-400/50 rounded-lg px-4 py-3 text-xs md:text-sm text-white placeholder:text-[#52525b] focus:outline-none transition-colors font-sans"
             />
             <button
               type="submit"
               disabled={isAsking || !question.trim() || !uploadedFile}
-              className="px-5 py-3 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-xs md:text-sm font-semibold text-white transition-all shadow-md shadow-indigo-600/20 shrink-0 cursor-pointer"
+              className="px-6 py-3 bg-amber-400 hover:bg-amber-300 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-xs md:text-sm font-semibold text-black transition-colors shrink-0 cursor-pointer"
             >
-              {isAsking ? "..." : "Send"}
+              Send
             </button>
           </form>
         </div>
@@ -559,7 +531,7 @@ export default function Home() {
   );
 }
 
-/* ── Chat Message with Clickable Timestamps ── */
+/* ── Minimalist Chat Message with Gold Timestamp Buttons ── */
 function ChatMessage({
   message,
   onSeek,
@@ -575,7 +547,6 @@ function ChatMessage({
     return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
   };
 
-  // Convert raw timestamps [MM:SS] in assistant markdown into interactive scrub badges
   const renderFormattedContent = (content: string) => {
     if (isUser) return <p className="leading-relaxed">{content}</p>;
 
@@ -592,7 +563,7 @@ function ChatMessage({
                 key={index}
                 type="button"
                 onClick={() => onSeek(startSec)}
-                className="inline-flex items-center gap-1 px-2 py-0.5 mx-1 rounded-md text-[11px] font-mono font-semibold bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 transition-all cursor-pointer"
+                className="inline-flex items-center gap-1 px-2 py-0.5 mx-1 rounded text-[11px] font-mono font-medium bg-amber-400/10 text-amber-300 hover:bg-amber-400/20 border border-amber-400/30 transition-colors cursor-pointer"
                 title={`Jump to ${match[1]}`}
               >
                 ▶ {part}
@@ -607,18 +578,18 @@ function ChatMessage({
 
   return (
     <div className={`flex gap-3 ${isUser ? "ml-auto flex-row-reverse" : ""} max-w-[92%] md:max-w-3xl`}>
-      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-xs font-bold ${
+      <div className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 text-[10px] font-mono font-bold ${
         isUser
-          ? "bg-indigo-600 text-white"
-          : "bg-zinc-800 text-indigo-400 border border-zinc-700/60"
+          ? "bg-[#27272a] text-[#ededed]"
+          : "bg-[#18181c] text-amber-400 border border-[#27272c]"
       }`}>
-        {isUser ? "You" : "AI"}
+        {isUser ? "YOU" : "AI"}
       </div>
 
-      <div className={`p-4 rounded-2xl text-xs md:text-sm ${
+      <div className={`p-4 rounded-xl text-xs md:text-sm ${
         isUser
-          ? "bg-indigo-600 text-white rounded-tr-sm"
-          : "bg-zinc-900 border border-zinc-800/80 text-zinc-100 rounded-tl-sm shadow-xl"
+          ? "bg-[#1f1f23] text-white rounded-tr-sm"
+          : "bg-[#121215] border border-[#1f1f23] text-[#ededed] rounded-tl-sm shadow-xl"
       }`}>
         {renderFormattedContent(message.content)}
       </div>
@@ -626,7 +597,7 @@ function ChatMessage({
   );
 }
 
-/* ── Collapsible Sources Drawer with Clickable Timestamps ── */
+/* ── Minimalist Sources Drawer with Gold Timestamp Jump ── */
 function SourcesPanel({
   sources,
   onSeek,
@@ -643,17 +614,17 @@ function SourcesPanel({
   };
 
   return (
-    <div className="ml-11">
+    <div className="ml-10">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="text-[11px] text-zinc-400 hover:text-indigo-400 transition-colors font-mono py-1 px-1 flex items-center gap-1.5 cursor-pointer"
+        className="text-[10px] text-[#71717a] hover:text-amber-300 transition-colors font-mono py-1 flex items-center gap-1.5 cursor-pointer"
       >
         <span>{isOpen ? "▾" : "▸"}</span>
-        <span>{sources.length} retrieved context sources</span>
+        <span>{sources.length} sources retrieved</span>
       </button>
 
       {isOpen && (
-        <div className="mt-2 space-y-2 border-l border-zinc-800 pl-3">
+        <div className="mt-2 space-y-2 border-l border-[#1f1f23] pl-3">
           {sources.map((src, idx) => {
             const timeMatch = src.match(/(\d{1,2}:\d{2})/);
             const seconds = timeMatch ? parseTimestampToSeconds(timeMatch[1]) : null;
@@ -661,21 +632,21 @@ function SourcesPanel({
             return (
               <div
                 key={idx}
-                className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-3 text-xs text-zinc-300"
+                className="bg-[#121215] border border-[#1f1f23] rounded-lg p-3 text-xs text-[#a1a1aa]"
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold text-zinc-400 text-[11px]">Chunk {idx + 1}</span>
+                  <span className="font-mono text-[#71717a] text-[10px]">Segment {idx + 1}</span>
                   {seconds !== null && (
                     <button
                       type="button"
                       onClick={() => onSeek(seconds)}
-                      className="text-[10px] font-mono text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 cursor-pointer"
+                      className="text-[10px] font-mono text-amber-300 hover:text-amber-200 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20 cursor-pointer"
                     >
                       ▶ Jump to {timeMatch ? timeMatch[1] : ""}
                     </button>
                   )}
                 </div>
-                <p className="leading-relaxed text-zinc-300">{src}</p>
+                <p className="leading-relaxed text-[#d4d4d8]">{src}</p>
               </div>
             );
           })}
