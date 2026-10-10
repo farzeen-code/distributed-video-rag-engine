@@ -13,6 +13,14 @@ def get_whisper_model() -> WhisperModel:
     
     return model_instance
 
+def unload_whisper_model():
+    global model_instance
+    if model_instance is not None:
+        del model_instance
+        model_instance = None
+        import gc
+        gc.collect()
+
 def extract_audio(video_path: str, output_audio_path: str) -> None:
     command = [
         "ffmpeg",

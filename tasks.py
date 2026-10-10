@@ -1,7 +1,7 @@
 import os
 import gc
 from celery import Celery
-from video_processing import transcribe_video_audio, extract_audio
+from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model
 from vector_store import add_chunk
 
 import ssl
@@ -60,6 +60,10 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
 
         segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress)
         
+        # Free Whisper RAM completely before starting ChromaDB embeddings
+        unload_whisper_model()
+        gc.collect()
+
         if not segments:
             raise ValueError("No speech was detected in the audio file")
         

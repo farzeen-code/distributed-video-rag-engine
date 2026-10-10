@@ -52,21 +52,18 @@ def add_chunk(chunks, filename):
     if not chunks:
         return
 
-    collection=get_collection()
-    collection.delete(where={"source": filename})
+    collection = get_collection()
+    try:
+        collection.delete(where={"source": filename})
+    except Exception as e:
+        print(f"[VectorStore] delete existing source: {e}")
     
-    # Process embeddings in small batches to keep memory overhead flat (<20MB)
-    all_embeddings = []
     batch_size = 16
-    embed_fn = get_embedding_function()
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i:i + batch_size]
-        all_embeddings.extend(embed_fn(batch))
-        
-    ids = [hashlib.md5((f"{filename}_{i}_{chunk}").encode()).hexdigest() for i, chunk in enumerate(chunks)]
-
-    metadatas = [{"source": filename} for _ in chunks]
-    collection.upsert(documents=chunks, embeddings=all_embeddings, ids=ids, metadatas=metadatas)
+        batch_ids = [hashlib.md5((f"{filename}_{i + j}_{chunk}").encode()).hexdigest() for j, chunk in enumerate(batch)]
+        batch_metadatas = [{"source": filename} for _ in batch]
+        collection.upsert(documents=batch, ids=batch_ids, metadatas=batch_metadatas)
 
 def retrieve(question: str, filename: str=None, top_k: int=5, max_distance: float=1.25) -> list[str]:
     collection=get_collection()
