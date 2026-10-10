@@ -3,6 +3,8 @@ from celery import Celery
 from video_processing import transcribe_video_audio, extract_audio
 from vector_store import add_chunk
 
+import ssl
+
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 if REDIS_URL.startswith("https://") or REDIS_URL.startswith("http://"):
     raise ValueError(
@@ -10,12 +12,12 @@ if REDIS_URL.startswith("https://") or REDIS_URL.startswith("http://"):
     )
 if REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in REDIS_URL:
     separator = "&" if "?" in REDIS_URL else "?"
-    REDIS_URL = f"{REDIS_URL}{separator}ssl_cert_reqs=required"
+    REDIS_URL = f"{REDIS_URL}{separator}ssl_cert_reqs=CERT_NONE"
 
 RESULT_BACKEND = os.environ.get("RESULT_BACKEND", REDIS_URL)
 if RESULT_BACKEND.startswith("rediss://") and "ssl_cert_reqs" not in RESULT_BACKEND:
     separator = "&" if "?" in RESULT_BACKEND else "?"
-    RESULT_BACKEND = f"{RESULT_BACKEND}{separator}ssl_cert_reqs=required"
+    RESULT_BACKEND = f"{RESULT_BACKEND}{separator}ssl_cert_reqs=CERT_NONE"
 
 celery_app = Celery(
     "video_tasks",
@@ -29,9 +31,15 @@ celery_app.conf.update(
     result_serializer="json",
     accept_content=["json"],
     timezone="UTC",
-    enable_utc=True
-    
+    enable_utc=True,
+    broker_connection_retry_on_startup=True,
 )
+
+if REDIS_URL.startswith("rediss://"):
+    celery_app.conf.update(
+        broker_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
+        redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
+    )
 
 @celery_app.task(bind=True)
 def process_video_task(self, video_path: str, original_filename: str):   #self: each instance of a task
