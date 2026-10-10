@@ -1,4 +1,5 @@
 import os
+import gc
 from celery import Celery
 from video_processing import transcribe_video_audio, extract_audio
 from vector_store import add_chunk
@@ -85,5 +86,6 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
     finally:
         if os.path.exists(audio_path):
             os.remove(audio_path)
+        gc.collect()
         
         

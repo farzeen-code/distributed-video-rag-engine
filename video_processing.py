@@ -3,12 +3,13 @@ import subprocess
 from typing import List, Dict, Any
 from faster_whisper import WhisperModel
 
+WHISPER_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "tiny")
 model_instance = None
 
 def get_whisper_model() -> WhisperModel:
     global model_instance
-    if model_instance is None:  #if the AI model is already loaded
-        model_instance = WhisperModel("base", device="cpu", compute_type="int8")
+    if model_instance is None:
+        model_instance = WhisperModel(WHISPER_SIZE, device="cpu", compute_type="int8")
     
     return model_instance
 
