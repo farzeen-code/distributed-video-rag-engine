@@ -482,7 +482,7 @@ export default function Home() {
       <main className="flex-1 flex flex-col min-w-0 h-full">
 
         {/* Minimalist Top Bar */}
-        <header className={`px-6 py-4 border-b ${theme.header} backdrop-blur-md flex items-center justify-between shrink-0`}>
+        <header className={`px-6 py-3.5 border-b ${theme.header} backdrop-blur-md flex items-center justify-between shrink-0`}>
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -491,7 +491,7 @@ export default function Home() {
               ☰
             </button>
             <div className="flex items-center gap-2.5">
-              <span className={`text-xs font-mono ${isDarkMode ? "text-[#a1a1aa]" : "text-[#4b5563]"}`}>
+              <span className={`text-xs font-mono font-medium ${isDarkMode ? "text-[#a1a1aa]" : "text-[#4b5563]"}`}>
                 {uploadedFile ? uploadedFile.name : "Workspace"}
               </span>
               {uploadedFile && (
@@ -500,6 +500,74 @@ export default function Home() {
                 </span>
               )}
             </div>
+          </div>
+
+          {/* ── Top Right Interactive Controls ── */}
+          <div className="flex items-center gap-2">
+            {/* 1. Layout Mode (Top vs Split) */}
+            <div className="flex items-center rounded-lg p-0.5 border border-inherit bg-inherit text-[11px] font-mono">
+              <button
+                type="button"
+                onClick={() => setVideoPosition("stacked")}
+                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                  videoPosition === "stacked"
+                    ? isDarkMode
+                      ? "bg-amber-400 text-black font-semibold"
+                      : "bg-amber-400 text-black font-semibold"
+                    : isDarkMode
+                      ? "text-zinc-400 hover:text-white"
+                      : "text-zinc-600 hover:text-black"
+                }`}
+                title="Stacked Top View"
+              >
+                Top
+              </button>
+              <button
+                type="button"
+                onClick={() => setVideoPosition("split")}
+                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                  videoPosition === "split"
+                    ? isDarkMode
+                      ? "bg-amber-400 text-black font-semibold"
+                      : "bg-amber-400 text-black font-semibold"
+                    : isDarkMode
+                      ? "text-zinc-400 hover:text-white"
+                      : "text-zinc-600 hover:text-black"
+                }`}
+                title="Split Side-by-Side View"
+              >
+                Split
+              </button>
+            </div>
+
+            {/* 2. Dark / Light Mode Switcher */}
+            <button
+              type="button"
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className={`px-3 py-1 rounded-lg text-xs font-mono font-medium border transition-colors flex items-center gap-1.5 cursor-pointer ${
+                isDarkMode
+                  ? "bg-[#18181c] border-[#27272c] text-amber-300 hover:border-amber-400/60"
+                  : "bg-white border-[#e5e7eb] text-amber-600 hover:border-amber-500 shadow-sm"
+              }`}
+              title="Toggle Dark / Light Theme"
+            >
+              <span>{isDarkMode ? "🌙" : "☀️"}</span>
+              <span className="hidden sm:inline">{isDarkMode ? "Dark" : "Light"}</span>
+            </button>
+
+            {/* 3. Reset Session Button */}
+            <button
+              type="button"
+              onClick={handleResetSession}
+              className={`px-2.5 py-1 rounded-lg text-xs font-mono border transition-colors cursor-pointer ${
+                isDarkMode
+                  ? "border-[#27272c] text-zinc-400 hover:text-white hover:bg-zinc-800"
+                  : "border-[#e5e7eb] text-zinc-600 hover:text-black hover:bg-zinc-100"
+              }`}
+              title="Reset conversation"
+            >
+              ↺
+            </button>
           </div>
         </header>
 
