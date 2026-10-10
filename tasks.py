@@ -4,6 +4,10 @@ from video_processing import transcribe_video_audio, extract_audio
 from vector_store import add_chunk
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+if REDIS_URL.startswith("https://") or REDIS_URL.startswith("http://"):
+    raise ValueError(
+        "Invalid REDIS_URL: Celery requires a TCP Redis URL starting with 'rediss://' (e.g. rediss://default:...@...upstash.io:6379), NOT the REST API 'https://' URL from Upstash."
+    )
 if REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in REDIS_URL:
     separator = "&" if "?" in REDIS_URL else "?"
     REDIS_URL = f"{REDIS_URL}{separator}ssl_cert_reqs=required"
