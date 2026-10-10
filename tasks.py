@@ -53,7 +53,11 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         
         self.update_state(state="PROCESSING", meta={"step": "Transcribing audio with Whisper", "progress": 40})
         print(f"[{self.request.id}] Transcribing audio..........")
-        segments = transcribe_video_audio(audio_path)
+
+        def update_whisper_progress(pct: int, msg: str):
+            self.update_state(state="PROCESSING", meta={"step": msg, "progress": pct})
+
+        segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress)
         
         if not segments:
             raise ValueError("No speech was detected in the audio file")

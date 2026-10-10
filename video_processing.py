@@ -41,11 +41,12 @@ def format_timestamp(seconds: float) -> str:
     secs = int(seconds % 60)
     return f"{mins:02d}:{secs:02d}"
     
-def transcribe_video_audio(audio_path: str) -> list[dict[str, Any]]:
+def transcribe_video_audio(audio_path: str, progress_callback=None) -> list[dict[str, Any]]:
     model = get_whisper_model()
-    segments, info = model.transcribe(audio_path, beam_size=5)
+    segments, info = model.transcribe(audio_path, beam_size=1)
         
     print(f"Detected Language '{info.language}' with probability '{info.language_probability:.2f}'")
+    total_duration = max(getattr(info, "duration", 1.0), 1.0)
         
     results = []
     for segment in segments:
@@ -59,8 +60,12 @@ def transcribe_video_audio(audio_path: str) -> list[dict[str, Any]]:
         results.append({
             "start": start_fmt,
             "end": end_fmt,
-            "timestamp_label": f"{start_fmt} - {end_fmt}",
+            "timestamp_label": f"[{start_fmt} - {end_fmt}]",
             "text": text
         })
+
+        if progress_callback:
+            percent = min(int(40 + (segment.end / total_duration) * 35), 75)
+            progress_callback(percent, f"Transcribing audio with Whisper ({end_fmt} / {format_timestamp(total_duration)})")
             
     return results
