@@ -420,60 +420,14 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── INTERACTIVE SETTINGS SECTION ── */}
-        <div className="mt-auto p-5 border-t border-inherit space-y-4">
-          <div className={`text-[10px] font-mono ${theme.textMuted} uppercase tracking-widest`}>
-            Display & Controls
-          </div>
-
-          {/* Setting 1: Dark / Light Mode Toggle */}
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium">Appearance</span>
-            <button
-              type="button"
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className={`text-xs px-2.5 py-1 rounded-md border font-mono transition-colors flex items-center gap-1.5 cursor-pointer ${
-                isDarkMode
-                  ? "bg-[#18181c] border-[#27272c] text-amber-300 hover:border-amber-400/50"
-                  : "bg-white border-[#e5e7eb] text-amber-600 hover:border-amber-500 shadow-sm"
-              }`}
-            >
-              <span>{isDarkMode ? "🌙" : "☀️"}</span>
-              <span>{isDarkMode ? "Dark" : "Light"}</span>
-            </button>
-          </div>
-
-          {/* Setting 2: Video Layout Position Toggle (Stacked vs Split) */}
-          {videoBlobUrl && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium">Video Layout</span>
-              <button
-                type="button"
-                onClick={() => setVideoPosition(videoPosition === "stacked" ? "split" : "stacked")}
-                className={`text-xs px-2.5 py-1 rounded-md border font-mono transition-colors cursor-pointer ${
-                  isDarkMode
-                    ? "bg-[#18181c] border-[#27272c] text-zinc-300 hover:border-amber-400/50"
-                    : "bg-white border-[#e5e7eb] text-zinc-700 hover:border-amber-500 shadow-sm"
-                }`}
-              >
-                {videoPosition === "stacked" ? "Top Banner" : "Split View"}
-              </button>
-            </div>
-          )}
-
-          {/* Setting 3: Reset Conversation */}
-          <div className="flex items-center justify-between pt-1">
-            <span className={`text-xs ${theme.textMuted}`}>Session</span>
-            <button
-              type="button"
-              onClick={handleResetSession}
-              className={`text-[11px] font-mono px-2 py-1 rounded transition-colors cursor-pointer ${
-                isDarkMode ? "text-zinc-400 hover:text-white hover:bg-zinc-800" : "text-zinc-600 hover:text-black hover:bg-zinc-200"
-              }`}
-              title="Clear message history and start a new session"
-            >
-              ↺ Reset Chat
-            </button>
+        {/* Quick System Badge */}
+        <div className={`mt-auto p-5 border-t ${isDarkMode ? "border-[#1f1f23]" : "border-[#e5e7eb]"}`}>
+          <div className="flex items-center justify-between text-[11px] font-mono">
+            <span className="flex items-center gap-1.5 text-amber-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+              FastAPI + Celery
+            </span>
+            <span className={theme.textMuted}>{sessionId.slice(0, 11)}</span>
           </div>
         </div>
       </aside>
@@ -503,48 +457,12 @@ export default function Home() {
           </div>
 
           {/* ── Top Right Interactive Controls ── */}
-          <div className="flex items-center gap-2">
-            {/* 1. Layout Mode (Top vs Split) */}
-            <div className="flex items-center rounded-lg p-0.5 border border-inherit bg-inherit text-[11px] font-mono">
-              <button
-                type="button"
-                onClick={() => setVideoPosition("stacked")}
-                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
-                  videoPosition === "stacked"
-                    ? isDarkMode
-                      ? "bg-amber-400 text-black font-semibold"
-                      : "bg-amber-400 text-black font-semibold"
-                    : isDarkMode
-                      ? "text-zinc-400 hover:text-white"
-                      : "text-zinc-600 hover:text-black"
-                }`}
-                title="Stacked Top View"
-              >
-                Top
-              </button>
-              <button
-                type="button"
-                onClick={() => setVideoPosition("split")}
-                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
-                  videoPosition === "split"
-                    ? isDarkMode
-                      ? "bg-amber-400 text-black font-semibold"
-                      : "bg-amber-400 text-black font-semibold"
-                    : isDarkMode
-                      ? "text-zinc-400 hover:text-white"
-                      : "text-zinc-600 hover:text-black"
-                }`}
-                title="Split Side-by-Side View"
-              >
-                Split
-              </button>
-            </div>
-
-            {/* 2. Dark / Light Mode Switcher */}
+          <div className="flex items-center gap-2.5">
+            {/* 1. Single Clean Dark / Light Mode Switcher */}
             <button
               type="button"
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className={`px-3 py-1 rounded-lg text-xs font-mono font-medium border transition-colors flex items-center gap-1.5 cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium border transition-colors flex items-center gap-2 cursor-pointer ${
                 isDarkMode
                   ? "bg-[#18181c] border-[#27272c] text-amber-300 hover:border-amber-400/60"
                   : "bg-white border-[#e5e7eb] text-amber-600 hover:border-amber-500 shadow-sm"
@@ -552,21 +470,22 @@ export default function Home() {
               title="Toggle Dark / Light Theme"
             >
               <span>{isDarkMode ? "🌙" : "☀️"}</span>
-              <span className="hidden sm:inline">{isDarkMode ? "Dark" : "Light"}</span>
+              <span>{isDarkMode ? "Dark" : "Light"}</span>
             </button>
 
-            {/* 3. Reset Session Button */}
+            {/* 2. Reset Session Button */}
             <button
               type="button"
               onClick={handleResetSession}
-              className={`px-2.5 py-1 rounded-lg text-xs font-mono border transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-mono border transition-colors flex items-center gap-1.5 cursor-pointer ${
                 isDarkMode
-                  ? "border-[#27272c] text-zinc-400 hover:text-white hover:bg-zinc-800"
-                  : "border-[#e5e7eb] text-zinc-600 hover:text-black hover:bg-zinc-100"
+                  ? "bg-[#18181c] border-[#27272c] text-zinc-400 hover:text-white hover:bg-zinc-800"
+                  : "bg-white border-[#e5e7eb] text-zinc-600 hover:text-black hover:bg-zinc-100 shadow-sm"
               }`}
-              title="Reset conversation"
+              title="Clear message history and start a new session"
             >
-              ↺
+              <span>↺</span>
+              <span className="hidden sm:inline">Reset</span>
             </button>
           </div>
         </header>
