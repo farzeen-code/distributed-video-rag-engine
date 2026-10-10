@@ -112,8 +112,9 @@ def get_task_status(task_id: str):
     
     elif task_result.state == "PROCESSING":
         meta = task_result.info if isinstance(task_result.info, dict) else {}
-        response["progress"] = meta.get("progress", 25)                        #Looks up progress in self.update_state, otherwise just shows 25% done
+        response["progress"] = meta.get("progress", 25)
         response["message"] = meta.get("step", "Processing video.....")
+        response["step"] = meta.get("step", "Processing video.....")
         
     elif task_result.state == "SUCCESS":
             meta = task_result.info if isinstance(task_result.info, dict) else {}

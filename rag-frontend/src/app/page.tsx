@@ -87,9 +87,9 @@ export default function Home() {
 
     // ── VIDEO PIPELINE ──
     if (isVideo) {
-      setUploadStatus("Uploading video...");
+      setUploadStatus("Uploading video to server...");
       setVideoProgress(15);
-      setVideoStep("Extracting audio with FFmpeg");
+      setVideoStep("Uploading video file...");
 
       try {
         const res = await fetch(`${API_URL}/upload-video`, {
@@ -102,17 +102,24 @@ export default function Home() {
         }
 
         const taskId = data.task_id;
-        setUploadStatus("Transcribing & indexing...");
+        setUploadStatus("Queued in background worker...");
+        setVideoStep("Queued for processing...");
+        setVideoProgress(20);
 
         pollingTimerRef.current = setInterval(async () => {
           try {
             const pollRes = await fetch(`${API_URL}/tasks/${taskId}`);
             const pollData = await pollRes.json();
 
-            if (pollData.state === "PROCESSING") {
-              setVideoProgress(pollData.progress || 30);
-              setVideoStep(pollData.step || "Processing video...");
-              setUploadStatus(`${pollData.step || "Processing..."}`);
+            if (pollData.state === "PENDING") {
+              setVideoProgress(25);
+              setVideoStep("Waiting in worker queue...");
+              setUploadStatus("Queued in background worker...");
+            } else if (pollData.state === "PROCESSING") {
+              setVideoProgress(pollData.progress || 40);
+              const stepText = pollData.step || pollData.message || "Processing video...";
+              setVideoStep(stepText);
+              setUploadStatus(stepText);
             } else if (pollData.state === "SUCCESS") {
               if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
               setVideoProgress(100);
