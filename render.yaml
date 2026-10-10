@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: docai-backend
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: MONGODB_URI
+        sync: false

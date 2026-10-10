@@ -4,7 +4,14 @@ from video_processing import transcribe_video_audio, extract_audio
 from vector_store import add_chunk
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-RESULT_BACKEND = os.environ.get("RESULT_BACKEND", "redis://localhost:6379/1")
+if REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in REDIS_URL:
+    separator = "&" if "?" in REDIS_URL else "?"
+    REDIS_URL = f"{REDIS_URL}{separator}ssl_cert_reqs=required"
+
+RESULT_BACKEND = os.environ.get("RESULT_BACKEND", REDIS_URL)
+if RESULT_BACKEND.startswith("rediss://") and "ssl_cert_reqs" not in RESULT_BACKEND:
+    separator = "&" if "?" in RESULT_BACKEND else "?"
+    RESULT_BACKEND = f"{RESULT_BACKEND}{separator}ssl_cert_reqs=required"
 
 celery_app = Celery(
     "video_tasks",
