@@ -419,17 +419,6 @@ export default function Home() {
             </div>
           </div>
         )}
-
-        {/* Quick System Badge */}
-        <div className={`mt-auto p-5 border-t ${isDarkMode ? "border-[#1f1f23]" : "border-[#e5e7eb]"}`}>
-          <div className="flex items-center justify-between text-[11px] font-mono">
-            <span className="flex items-center gap-1.5 text-amber-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-              FastAPI + Celery
-            </span>
-            <span className={theme.textMuted}>{sessionId.slice(0, 11)}</span>
-          </div>
-        </div>
       </aside>
 
       {/* ── Main Canvas ── */}
