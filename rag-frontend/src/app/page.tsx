@@ -594,7 +594,7 @@ export default function Home() {
   );
 }
 
-/* ── Minimalist Chat Message with Interactive Gold Timestamps ── */
+/* ── Minimalist Chat Message with Interactive Gold Timestamps & Copy ── */
 function ChatMessage({
   message,
   onSeek,
@@ -605,6 +605,7 @@ function ChatMessage({
   isDarkMode: boolean;
 }) {
   const isUser = message.role === "user";
+  const [copied, setCopied] = useState(false);
 
   const parseTimestampToSeconds = (ts: string): number => {
     const match = ts.match(/(\d{1,2}):(\d{2})/);
@@ -612,30 +613,59 @@ function ChatMessage({
     return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
   };
 
+  // Strip asterisks and clean up markdown artifacts
+  const getCleanContent = (raw: string) => {
+    return raw
+      .replace(/\*\*At\s*(\[\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\])\s*:?\*\*/gi, "At $1:")
+      .replace(/\*\*(\[\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\])\*\*/g, "$1")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/^\s*\*\s+/gm, "• ");
+  };
+
+  const handleCopy = () => {
+    const textToCopy = getCleanContent(message.content);
+    navigator.clipboard.writeText(textToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const renderFormattedContent = (content: string) => {
     if (isUser) return <p className="leading-relaxed">{content}</p>;
 
-    const parts = content.split(/(\[\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\])/g);
+    const clean = getCleanContent(content);
+    const lines = clean.split("\n");
 
     return (
-      <div className="leading-relaxed space-y-1">
-        {parts.map((part, index) => {
-          const match = part.match(/\[(\d{1,2}:\d{2})(?:\s*-\s*(\d{1,2}:\d{2}))?\]/);
-          if (match) {
-            const startSec = parseTimestampToSeconds(match[1]);
-            return (
-              <button
-                key={index}
-                type="button"
-                onClick={() => onSeek(startSec)}
-                className="inline-flex items-center gap-1 px-2 py-0.5 mx-1 rounded text-[11px] font-mono font-medium bg-amber-400/10 text-amber-400 hover:bg-amber-400/20 border border-amber-400/30 transition-colors cursor-pointer"
-                title={`Jump to ${match[1]}`}
-              >
-                ▶ {part}
-              </button>
-            );
+      <div className="leading-relaxed space-y-2">
+        {lines.map((line, lineIdx) => {
+          if (!line.trim()) {
+            return <div key={lineIdx} className="h-1.5" />;
           }
-          return <ReactMarkdown key={index}>{part}</ReactMarkdown>;
+
+          const parts = line.split(/(\[\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\])/g);
+
+          return (
+            <p key={lineIdx} className="leading-relaxed">
+              {parts.map((part, partIdx) => {
+                const match = part.match(/\[(\d{1,2}:\d{2})(?:\s*-\s*(\d{1,2}:\d{2}))?\]/);
+                if (match) {
+                  const startSec = parseTimestampToSeconds(match[1]);
+                  return (
+                    <button
+                      key={partIdx}
+                      type="button"
+                      onClick={() => onSeek(startSec)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 mx-1 rounded text-[11px] font-mono font-medium bg-amber-400/10 text-amber-400 hover:bg-amber-400/20 border border-amber-400/30 transition-colors cursor-pointer align-middle"
+                      title={`Jump to ${match[1]}`}
+                    >
+                      ▶ {part}
+                    </button>
+                  );
+                }
+                return <span key={partIdx}>{part}</span>;
+              })}
+            </p>
+          );
         })}
       </div>
     );
@@ -659,6 +689,39 @@ function ChatMessage({
             : "bg-[#ffffff] border border-[#e5e7eb] text-[#111827] rounded-tl-sm shadow-sm"
       }`}>
         {renderFormattedContent(message.content)}
+
+        {!isUser && (
+          <div className={`flex justify-end mt-3 pt-2.5 border-t ${isDarkMode ? "border-[#1f1f23]" : "border-[#f3f4f6]"}`}>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className={`inline-flex items-center gap-1.5 text-[11px] font-mono transition-colors cursor-pointer px-2 py-1 rounded ${
+                copied
+                  ? "text-emerald-400 bg-emerald-400/10 border border-emerald-400/20"
+                  : isDarkMode
+                    ? "text-zinc-400 hover:text-amber-400 hover:bg-[#18181c]"
+                    : "text-zinc-500 hover:text-amber-600 hover:bg-zinc-100"
+              }`}
+              title="Copy answer to clipboard"
+            >
+              {copied ? (
+                <>
+                  <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  <span>Copy answer</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
