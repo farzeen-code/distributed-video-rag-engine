@@ -78,6 +78,7 @@ async def upload_video_endpoint(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Failed to save video: {str(e)}")
     finally:
         await file.close()
+        gc.collect()
         
     file_size = os.path.getsize(DEST_PATH)
     if file_size > MAX_VIDEO_SIZE:

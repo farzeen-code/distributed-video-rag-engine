@@ -52,7 +52,12 @@ def format_timestamp(seconds: float) -> str:
     
 def transcribe_video_audio(audio_path: str, progress_callback=None) -> list[dict[str, Any]]:
     model = get_whisper_model()
-    segments, info = model.transcribe(audio_path, beam_size=1)
+    segments, info = model.transcribe(
+        audio_path, 
+        beam_size=1,
+        vad_filter=True,
+        condition_on_previous_text=False
+    )
         
     print(f"Detected Language '{info.language}' with probability '{info.language_probability:.2f}'")
     total_duration = max(getattr(info, "duration", 1.0), 1.0)
