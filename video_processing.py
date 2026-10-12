@@ -56,7 +56,7 @@ def transcribe_video_audio(audio_path: str, progress_callback=None) -> list[dict
         audio_path, 
         beam_size=1,
         vad_filter=True,
-        condition_on_previous_text=False
+        condition_on_previous_text=False,
         temperature=0
     )
         
