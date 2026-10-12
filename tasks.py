@@ -1,9 +1,10 @@
 import os
 import gc
 from celery import Celery
-
-
+import sys
 import ssl
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 if REDIS_URL.startswith("https://") or REDIS_URL.startswith("http://"):
@@ -49,7 +50,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
     try:
         from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model
 
-        self.update_state(state="PROCESSING", meta={"step": "Extracting audio with FFmpeg", "progress": 15})
+        self.update_state(state="PROCESSING", meta={"step": "Extracting audio with FFmpeg", "progress": 40})
         print(f"[{self.request.id}] Extracting audio from {video_path}")
         extract_audio(video_path, audio_path)
 
