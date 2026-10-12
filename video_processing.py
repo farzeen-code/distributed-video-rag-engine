@@ -57,6 +57,7 @@ def transcribe_video_audio(audio_path: str, progress_callback=None) -> list[dict
         beam_size=1,
         vad_filter=True,
         condition_on_previous_text=False
+        temperature=0
     )
         
     print(f"Detected Language '{info.language}' with probability '{info.language_probability:.2f}'")
