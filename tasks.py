@@ -52,7 +52,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         print(f"[{self.request.id}] Extracting audio from {video_path}")
         extract_audio(video_path, audio_path)
 
-        # Free disk and RAM pagecache immediately: raw MP4 is no longer needed
+        # To ensure that render memory does not exceed limit, dump the file as sson as it is transcribed
         if os.path.exists(video_path):
             try:
                 os.remove(video_path)
