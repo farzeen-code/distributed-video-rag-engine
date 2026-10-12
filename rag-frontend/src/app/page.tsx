@@ -88,23 +88,54 @@ export default function Home() {
     // ── VIDEO PIPELINE ──
     if (isVideo) {
       setUploadStatus("Uploading video to server...");
-      setVideoProgress(15);
-      setVideoStep("Uploading video file...");
+      setVideoProgress(5);
+      setVideoStep("Starting upload...");
 
       try {
-        const res = await fetch(`${API_URL}/upload-video`, {
-          method: "POST",
-          body: formData,
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.detail || "Video upload failed");
-        }
+        const uploadResponse = await new Promise<{ task_id: string }>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", `${API_URL}/upload-video`);
 
-        const taskId = data.task_id;
+          xhr.upload.onprogress = (evt) => {
+            if (evt.lengthComputable) {
+              const uploadPct = Math.min(30, Math.round((evt.loaded / evt.total) * 30));
+              setVideoProgress(Math.max(5, uploadPct));
+              const loadedMB = (evt.loaded / (1024 * 1024)).toFixed(1);
+              const totalMB = (evt.total / (1024 * 1024)).toFixed(1);
+              setVideoStep(`Uploading (${loadedMB}MB / ${totalMB}MB)`);
+              setUploadStatus(`Uploading: ${loadedMB}MB of ${totalMB}MB...`);
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const data = JSON.parse(xhr.responseText);
+                resolve(data);
+              } catch {
+                reject(new Error("Invalid JSON response from server"));
+              }
+            } else {
+              try {
+                const errData = JSON.parse(xhr.responseText);
+                reject(new Error(errData.detail || `Upload failed with status ${xhr.status}`));
+              } catch {
+                reject(new Error(`Upload failed with status ${xhr.status}`));
+              }
+            }
+          };
+
+          xhr.onerror = () => {
+            reject(new Error("Network error during video upload. Please check connection."));
+          };
+
+          xhr.send(formData);
+        });
+
+        const taskId = uploadResponse.task_id;
         setUploadStatus("Queued in background worker...");
-        setVideoStep("Queued for processing...");
-        setVideoProgress(20);
+        setVideoStep("Waiting in worker queue...");
+        setVideoProgress(35);
 
         pollingTimerRef.current = setInterval(async () => {
           try {
@@ -112,7 +143,7 @@ export default function Home() {
             const pollData = await pollRes.json();
 
             if (pollData.state === "PENDING") {
-              setVideoProgress(25);
+              setVideoProgress(35);
               setVideoStep("Waiting in worker queue...");
               setUploadStatus("Queued in background worker...");
             } else if (pollData.state === "PROCESSING") {
@@ -140,6 +171,8 @@ export default function Home() {
               setSidebarOpen(false);
             } else if (pollData.state === "FAILURE") {
               if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+              setVideoProgress(0);
+              setVideoStep("");
               setUploadStatus(`Error: ${pollData.error || "Video processing failed"}`);
               setIsUploading(false);
             }
@@ -150,6 +183,8 @@ export default function Home() {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Video upload failed";
         setUploadStatus(`Error: ${msg}`);
+        setVideoProgress(0);
+        setVideoStep("");
         setIsUploading(false);
       }
       return;
@@ -386,9 +421,9 @@ export default function Home() {
             </div>
           )}
 
-          {uploadStatus && !videoProgress && (
+          {uploadStatus && (
             <p className={`text-[11px] text-center mt-3 font-mono ${
-              uploadStatus.includes("Error") ? "text-rose-400" : "text-amber-400"
+              uploadStatus.includes("Error") ? "text-rose-400 font-semibold" : "text-amber-400"
             }`}>
               {uploadStatus}
             </p>
