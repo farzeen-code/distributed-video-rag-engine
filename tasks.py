@@ -51,6 +51,13 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         self.update_state(state="PROCESSING", meta={"step": "Extracting audio with FFmpeg", "progress": 15})
         print(f"[{self.request.id}] Extracting audio from {video_path}")
         extract_audio(video_path, audio_path)
+
+        # Free disk and RAM pagecache immediately: raw MP4 is no longer needed
+        if os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+            except Exception:
+                pass
         
         self.update_state(state="PROCESSING", meta={"step": "Transcribing audio with Whisper", "progress": 40})
         print(f"[{self.request.id}] Transcribing audio..........")
@@ -89,7 +96,15 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
 
     finally:
         if os.path.exists(audio_path):
-            os.remove(audio_path)
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+        if os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+            except Exception:
+                pass
         gc.collect()
         
         
