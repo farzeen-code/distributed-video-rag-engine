@@ -9,7 +9,7 @@ model_instance = None
 def get_whisper_model() -> WhisperModel:
     global model_instance
     if model_instance is None:
-        model_instance = WhisperModel(WHISPER_SIZE, device="cpu", compute_type="int8")
+        model_instance = WhisperModel(WHISPER_SIZE, device="cpu", compute_type="int8", cpu_threads=1)
     
     return model_instance
 

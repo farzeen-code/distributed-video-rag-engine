@@ -1,8 +1,7 @@
 import os
 import gc
 from celery import Celery
-from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model
-from vector_store import add_chunk
+
 
 import ssl
 
@@ -48,6 +47,8 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
     audio_path = f"{base_name}_temp.wav"
     
     try:
+        from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model
+
         self.update_state(state="PROCESSING", meta={"step": "Extracting audio with FFmpeg", "progress": 15})
         print(f"[{self.request.id}] Extracting audio from {video_path}")
         extract_audio(video_path, audio_path)
@@ -81,6 +82,8 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             formatted_chunks.append(chunk_content)    
             
         print(f"[{self.request.id}] Ingesting {len(formatted_chunks)} timestamped chunks into the ChromaDB...")
+        
+        from vector_store import add_chunk
         add_chunk(formatted_chunks, original_filename.lower())
         
         return{
