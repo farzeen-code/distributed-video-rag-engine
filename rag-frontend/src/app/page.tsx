@@ -323,9 +323,6 @@ export default function Home() {
               </h1>
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
             </div>
-            <p className={`text-[10px] ${theme.textMuted} uppercase tracking-widest mt-1 font-mono`}>
-              Intelligence Studio
-            </p>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}
