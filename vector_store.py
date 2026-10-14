@@ -67,12 +67,19 @@ def add_chunk(chunks, filename):
     except Exception as e:
         print(f"[VectorStore] delete existing source: {e}")
     
-    batch_size = 16
+    batch_size = 4
     for i in range(0, len(valid_chunks), batch_size):
         batch = valid_chunks[i:i + batch_size]
         batch_ids = [hashlib.md5((f"{filename}_{i + j}_{chunk}").encode()).hexdigest() for j, chunk in enumerate(batch)]
         batch_metadatas = [{"source": filename} for _ in batch]
         collection.upsert(documents=batch, ids=batch_ids, metadatas=batch_metadatas)
+
+    # Force immediate memory reclamation after embedding calculations
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
 
 def retrieve(question: str, filename: str=None, top_k: int=5, max_distance: float=1.25) -> list[str]:
     collection=get_collection()

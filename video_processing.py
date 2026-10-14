@@ -20,6 +20,11 @@ def unload_whisper_model():
         model_instance = None
         import gc
         gc.collect()
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
 
 def extract_audio(video_path: str, output_audio_path: str) -> None:
     command = [

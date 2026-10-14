@@ -72,6 +72,11 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         # Free Whisper RAM completely before starting ChromaDB embeddings
         unload_whisper_model()
         gc.collect()
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
 
         if not segments:
             raise ValueError("No speech was detected in the audio file")
