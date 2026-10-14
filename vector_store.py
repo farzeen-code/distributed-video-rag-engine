@@ -37,8 +37,11 @@ def is_summary_intent(query: str) -> bool:
         print(f"[Router] fallback to pinpoint due to error: {e}")
         return False
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CHROMA_PATH = os.path.join(BASE_DIR, "chroma_db")
+
 def get_collection():
-    client = chromadb.PersistentClient(path="chroma_db")
+    client = chromadb.PersistentClient(path=CHROMA_PATH)
     return client.get_or_create_collection(
         name="documents",
         embedding_function=get_embedding_function()
@@ -52,6 +55,12 @@ def add_chunk(chunks, filename):
     if not chunks:
         return
 
+    # Filter out empty or whitespace-only chunks to prevent ChromaDB ValueError
+    valid_chunks = [c.strip() for c in chunks if isinstance(c, str) and c.strip()]
+    if not valid_chunks:
+        print(f"[VectorStore] No valid text chunks to add for {filename}")
+        return
+
     collection = get_collection()
     try:
         collection.delete(where={"source": filename})
@@ -59,8 +68,8 @@ def add_chunk(chunks, filename):
         print(f"[VectorStore] delete existing source: {e}")
     
     batch_size = 16
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i:i + batch_size]
+    for i in range(0, len(valid_chunks), batch_size):
+        batch = valid_chunks[i:i + batch_size]
         batch_ids = [hashlib.md5((f"{filename}_{i + j}_{chunk}").encode()).hexdigest() for j, chunk in enumerate(batch)]
         batch_metadatas = [{"source": filename} for _ in batch]
         collection.upsert(documents=batch, ids=batch_ids, metadatas=batch_metadatas)

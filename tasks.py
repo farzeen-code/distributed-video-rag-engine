@@ -95,7 +95,9 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         }
         
     except Exception as e:
-        print(f"[{self.request.id}] failed with error: {e}")
+        import traceback
+        print(f"[{self.request.id}] failed with error: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
         raise e
 
     finally:
