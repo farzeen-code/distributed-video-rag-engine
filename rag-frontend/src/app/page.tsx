@@ -374,6 +374,9 @@ export default function Home() {
               type="file"
               accept=".pdf,.docx,.txt,.mp4,.mkv,.mov,.avi,.webm"
               className="hidden"
+              onClick={(e) => {
+                (e.target as HTMLInputElement).value = "";
+              }}
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) {
