@@ -27,6 +27,9 @@ def unload_whisper_model():
             pass
 
 def extract_audio(video_path: str, output_audio_path: str) -> None:
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Input video file does not exist: {video_path}")
+
     command = [
         "ffmpeg",
         "-y", # overqrite output file if exists

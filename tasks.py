@@ -44,11 +44,19 @@ if REDIS_URL.startswith("rediss://"):
 
 @celery_app.task(bind=True)
 def process_video_task(self, video_path: str, original_filename: str):   #self: each instance of a task
+    video_path = os.path.abspath(video_path)
     base_name, _ = os.path.splitext(video_path)
     audio_path = f"{base_name}_temp.wav"
     
     try:
         from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model
+
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(
+                f"Video file '{original_filename}' was not found on worker storage. "
+                "This typically occurs if the server redeployed while the task was in queue. "
+                "Please re-upload the video."
+            )
 
         self.update_state(state="PROCESSING", meta={"step": "Extracting audio with FFmpeg", "progress": 40})
         print(f"[{self.request.id}] Extracting audio from {video_path}")

@@ -19,7 +19,8 @@ from tasks import celery_app, process_video_task
 
 MAX_FILE_SIZE = 5 * 1024 * 1024
 
-STORAGE_DIR = Path("storage/videos")
+BASE_DIR = Path(__file__).resolve().parent
+STORAGE_DIR = BASE_DIR / "storage" / "videos"
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
@@ -68,7 +69,7 @@ async def upload_video_endpoint(file: UploadFile = File(...)):
         )
         
     unique_filename = f"{uuid.uuid4().hex}_{file.filename.lower()}"
-    DEST_PATH = STORAGE_DIR / unique_filename
+    DEST_PATH = (STORAGE_DIR / unique_filename).resolve()
 
     try:
         with open(DEST_PATH, "wb") as buffer:
