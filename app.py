@@ -8,7 +8,6 @@ import time
 from pypdf import PdfReader
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from pydantic import BaseModel
-from vector_store import add_chunk, retrieve, get_context, store_document, delete_document
 from generate import generate_answer
 from memory import add_message, get_history, init_db
 from typing import Optional
@@ -172,6 +171,7 @@ async def upload_document(file: UploadFile = File(...)):
             detail="Could not extract any readable text. If this is a scanned PDF, it requires OCR."
         )
     safe_filename = file.filename.lower() if file.filename else "Unknown"
+    from vector_store import store_document
     word_count, is_small = store_document(text, safe_filename)   
     
     # Reclaim temporary buffer memory immediately
@@ -190,13 +190,14 @@ class DeleteRequest(BaseModel):
 
 @app.post("/delete")
 def delete_document_endpoint(request: DeleteRequest):
+    from vector_store import delete_document
     safe_filename = request.filename.lower() if request.filename else None
     delete_document(request.filename)
     return {"status": "ok", "deleted": request.filename}
 
 @app.post("/query")
 def queryDocument(request: QueryRequest):
-    
+    from vector_store import get_context
     safe_filename = request.filename.lower() if request.filename else None
 
     t0 = time.time()

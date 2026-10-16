@@ -43,7 +43,7 @@ CHROMA_PATH = os.path.join(BASE_DIR, "chroma_db")
 def get_collection():
     client = chromadb.PersistentClient(path=CHROMA_PATH)
     return client.get_or_create_collection(
-        name="documents",
+        name="docai_v2",
         embedding_function=get_embedding_function()
     )
 

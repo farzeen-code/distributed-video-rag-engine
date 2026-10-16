@@ -106,6 +106,11 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         raise e
 
     finally:
+        try:
+            from video_processing import unload_whisper_model
+            unload_whisper_model()
+        except Exception:
+            pass
         if os.path.exists(audio_path):
             try:
                 os.remove(audio_path)
@@ -117,5 +122,10 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             except Exception:
                 pass
         gc.collect()
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
         
         

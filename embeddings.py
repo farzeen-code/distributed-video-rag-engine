@@ -1,13 +1,40 @@
+import os
 import re
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+from google import genai
+from chromadb import Documents, EmbeddingFunction, Embeddings
 
+_genai_client = None
 
-embedding_fn  = None
+def get_genai_client():
+    global _genai_client
+    if _genai_client is None:
+        _genai_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    return _genai_client
+
+class GeminiEmbeddingFunction(EmbeddingFunction[Documents]):
+    def __init__(self):
+        self.model_name = "gemini-embedding-001"
+
+    def __call__(self, input: Documents) -> Embeddings:
+        if not input:
+            return []
+        valid_input = [str(item) for item in input if str(item).strip()]
+        if not valid_input:
+            return []
+        client = get_genai_client()
+        response = client.models.embed_content(
+            model=self.model_name,
+            contents=valid_input,
+            config={"output_dimensionality": 768}
+        )
+        return [e.values for e in response.embeddings]
+
+embedding_fn = None
 
 def get_embedding_function():
     global embedding_fn
     if embedding_fn is None:
-        embedding_fn = DefaultEmbeddingFunction()
+        embedding_fn = GeminiEmbeddingFunction()
     return embedding_fn
         
     
