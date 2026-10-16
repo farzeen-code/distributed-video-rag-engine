@@ -63,7 +63,7 @@ def transcribe_video_audio(audio_path: str, progress_callback=None) -> list[dict
     segments, info = model.transcribe(
         audio_path, 
         beam_size=1,
-        vad_filter=True,
+        vad_filter=False,           # VAD disabled — saves ~80MB Silero ONNX runtime RAM
         condition_on_previous_text=False,
         temperature=0
     )
