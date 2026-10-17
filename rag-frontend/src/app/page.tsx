@@ -5,6 +5,25 @@ import ReactMarkdown from "react-markdown";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://docai-backend-efg3.onrender.com";
 
+const MAX_VIDEO_SECONDS = 600; // mirrors backend MAX_VIDEO_SECONDS so a refused file never costs a full upload
+
+function probeVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const probe = document.createElement("video");
+    probe.preload = "metadata";
+    probe.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(probe.duration) ? probe.duration : 0);
+    };
+    probe.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(0);
+    };
+    probe.src = url;
+  });
+}
+
 interface UploadedFile {
   name: string;
   wordCount: number;
@@ -25,7 +44,12 @@ export default function Home() {
   const [uploadStatus, setUploadStatus] = useState("");
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoStep, setVideoStep] = useState("");
+  const [videoElapsed, setVideoElapsed] = useState(0);
+  const [stallNotice, setStallNotice] = useState("");
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startedAtRef = useRef(0);
+  const lastTickRef = useRef(0);
+  const lastWorkerTickRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
   const [sessionId, setSessionId] = useState("");
@@ -72,10 +96,19 @@ export default function Home() {
     setIsUploading(true);
     setVideoProgress(0);
     setVideoStep("");
+    setVideoElapsed(0);
+    setStallNotice("");
 
     const isVideo = /\.(mp4|mkv|mov|avi|webm)$/i.test(selectedFile.name);
 
     if (isVideo) {
+      const durationSec = await probeVideoDuration(selectedFile);
+      if (durationSec > MAX_VIDEO_SECONDS) {
+        setUploadStatus(`Error: This video is ${(durationSec / 60).toFixed(1)} min. The free worker caps uploads at ${MAX_VIDEO_SECONDS / 60} minutes.`);
+        setIsUploading(false);
+        return;
+      }
+
       const blobUrl = URL.createObjectURL(selectedFile);
       setVideoBlobUrl(blobUrl);
     } else {
@@ -137,6 +170,12 @@ export default function Home() {
         setVideoStep("Waiting in worker queue...");
         setVideoProgress(35);
 
+        startedAtRef.current = Date.now();
+        lastTickRef.current = Date.now();
+        lastWorkerTickRef.current = null;
+        setVideoElapsed(0);
+        setStallNotice("");
+
         pollingTimerRef.current = setInterval(async () => {
           try {
             const pollRes = await fetch(`${API_URL}/tasks/${taskId}`);
@@ -151,8 +190,22 @@ export default function Home() {
               const stepText = pollData.step || pollData.message || "Processing video...";
               setVideoStep(stepText);
               setUploadStatus(stepText);
+
+              // updated_at is the worker heartbeat; progress is the fallback so older deploys still reset the timer
+              const workerTick = pollData.updated_at ?? pollData.progress;
+              if (workerTick !== lastWorkerTickRef.current) {
+                lastWorkerTickRef.current = workerTick ?? null;
+                lastTickRef.current = Date.now();
+                setStallNotice("");
+              }
+              setVideoElapsed(Math.round((Date.now() - startedAtRef.current) / 1000));
+              const idleSec = Math.round((Date.now() - lastTickRef.current) / 1000);
+              if (idleSec > 240) {
+                setStallNotice(`No worker update for ${Math.round(idleSec / 60)} min. It may still be decoding, or the container restarted mid-task.`);
+              }
             } else if (pollData.state === "SUCCESS") {
               if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+              setStallNotice("");
               setVideoProgress(100);
               setVideoStep("Completed");
               setUploadedFile({
@@ -166,6 +219,8 @@ export default function Home() {
                 setUploadStatus("");
                 setVideoProgress(0);
                 setVideoStep("");
+                setVideoElapsed(0);
+                setStallNotice("");
               }, 3000);
               setIsUploading(false);
               setSidebarOpen(false);
@@ -173,6 +228,8 @@ export default function Home() {
               if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
               setVideoProgress(0);
               setVideoStep("");
+              setVideoElapsed(0);
+              setStallNotice("");
               setUploadStatus(`Error: ${pollData.error || "Video processing failed"}`);
               setIsUploading(false);
             }
@@ -226,6 +283,8 @@ export default function Home() {
     }
     setVideoProgress(0);
     setVideoStep("");
+    setVideoElapsed(0);
+    setStallNotice("");
     if (videoBlobUrl) {
       URL.revokeObjectURL(videoBlobUrl);
       setVideoBlobUrl(null);
@@ -413,7 +472,7 @@ export default function Home() {
             <div className={`mt-3.5 ${theme.card} p-3 rounded-lg border`}>
               <div className="flex justify-between items-center text-[10px] mb-2 font-mono">
                 <span className="text-amber-400 truncate max-w-[170px] uppercase tracking-wider">{videoStep}</span>
-                <span className={theme.textMuted}>/ {videoProgress}%</span>
+                <span className={theme.textMuted}>/ {videoProgress}%{videoElapsed > 0 ? ` · ${Math.floor(videoElapsed / 60)}m ${String(videoElapsed % 60).padStart(2, "0")}s` : ""}</span>
               </div>
               <div className={`h-[2px] ${isDarkMode ? "bg-[#27272c]" : "bg-[#e5e7eb]"} overflow-hidden`}>
                 <div
@@ -421,6 +480,9 @@ export default function Home() {
                   style={{ width: `${videoProgress}%` }}
                 />
               </div>
+              {stallNotice && (
+                <p className={`text-[10px] font-mono mt-2 leading-relaxed ${isDarkMode ? "text-rose-400" : "text-rose-600"}`}>{stallNotice}</p>
+              )}
             </div>
           )}
 
