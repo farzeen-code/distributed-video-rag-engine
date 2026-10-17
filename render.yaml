@@ -11,3 +11,13 @@ services:
         sync: false
       - key: MONGODB_URI
         sync: false
+      - key: WHISPER_MODEL_SIZE
+        value: tiny.en
+      - key: WHISPER_CPU_THREADS
+        value: "2"
+      - key: MAX_VIDEO_SECONDS
+        value: "600"
+      - key: CELERY_TASK_SOFT_TIME_LIMIT
+        value: "1200"
+      - key: CELERY_TASK_TIME_LIMIT
+        value: "1500"

@@ -1,5 +1,6 @@
 import os
 import gc
+import time
 from celery import Celery
 import sys
 import ssl
@@ -34,6 +35,9 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     broker_connection_retry_on_startup=True,
+    task_soft_time_limit=int(os.environ.get("CELERY_TASK_SOFT_TIME_LIMIT", "1200")),
+    task_time_limit=int(os.environ.get("CELERY_TASK_TIME_LIMIT", "1500")),
+    task_reject_on_worker_lost=True,
 )
 
 if REDIS_URL.startswith("rediss://"):
@@ -49,7 +53,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
     audio_path = f"{base_name}_temp.wav"
     
     try:
-        from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model
+        from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model, get_audio_duration
 
         if not os.path.exists(video_path):
             raise FileNotFoundError(
@@ -58,24 +62,35 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
                 "Please re-upload the video."
             )
 
-        self.update_state(state="PROCESSING", meta={"step": "Extracting audio with FFmpeg", "progress": 40})
-        print(f"[{self.request.id}] Extracting audio from {video_path}")
+        def report(progress: int, step: str):
+            self.update_state(state="PROCESSING", meta={"step": step, "progress": progress, "updated_at": time.time()})
+
+        report(38, "Extracting audio with FFmpeg")
+        print(f"[{self.request.id}] Extracting audio from {video_path}", flush=True)
         extract_audio(video_path, audio_path)
 
-        # To ensure that render memory does not exceed limit, dump the file as sson as it is transcribed
+        # To ensure that render memory does not exceed limit, dump the file as soon as it is transcribed
         if os.path.exists(video_path):
             try:
                 os.remove(video_path)
             except Exception:
                 pass
-        
-        self.update_state(state="PROCESSING", meta={"step": "Transcribing audio with Whisper", "progress": 40})
-        print(f"[{self.request.id}] Transcribing audio..........")
+
+        audio_seconds = get_audio_duration(audio_path)
+        max_seconds = int(os.environ.get("MAX_VIDEO_SECONDS", "600"))
+        if audio_seconds > max_seconds:
+            raise ValueError(
+                f"This video is {audio_seconds / 60:.1f} minutes long, and the free worker caps "
+                f"ingestion at {max_seconds // 60} minutes. Please upload a shorter clip."
+            )
+
+        report(42, "Loading Whisper model")
+        print(f"[{self.request.id}] Transcribing {audio_seconds:.0f}s of audio", flush=True)
 
         def update_whisper_progress(pct: int, msg: str):
-            self.update_state(state="PROCESSING", meta={"step": msg, "progress": pct})
+            report(pct, msg)
 
-        segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress)
+        segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress, progress_start=45, progress_end=75)
         
         # Free Whisper RAM completely before starting ChromaDB embeddings
         unload_whisper_model()
@@ -89,13 +104,13 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         if not segments:
             raise ValueError("No speech was detected in the audio file")
         
-        self.update_state(state="PROCESSING", meta={"step": "Indexing into vector store", "progress": 80})
+        report(80, "Indexing into vector store")
         formatted_chunks = []
         for seg in segments:
             chunk_content = f"{seg['timestamp_label']} {seg['text']}"
             formatted_chunks.append(chunk_content)    
             
-        print(f"[{self.request.id}] Ingesting {len(formatted_chunks)} timestamped chunks into the ChromaDB...")
+        print(f"[{self.request.id}] Ingesting {len(formatted_chunks)} timestamped chunks into the ChromaDB...", flush=True)
         
         from vector_store import add_chunk
         add_chunk(formatted_chunks, original_filename.lower())
@@ -104,11 +119,17 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             "status": "COMPLETED",
             "filename": original_filename,
             "total_segments": len(formatted_chunks),
-            "message": f"Successfully indexed {len(formatted_chunks)} video segments withtimestamps", 
+            "message": f"Successfully indexed {len(formatted_chunks)} video segments with timestamps", 
         }
         
     except Exception as e:
         import traceback
+        from celery.exceptions import SoftTimeLimitExceeded
+        if isinstance(e, SoftTimeLimitExceeded):
+            e = RuntimeError(
+                "Transcription hit the worker time limit before finishing. "
+                "This video is too long for the free tier - try a shorter clip."
+            )
         print(f"[{self.request.id}] failed with error: {e}", flush=True)
         print(traceback.format_exc(), flush=True)
         raise e
@@ -135,5 +156,3 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception:
             pass
-        
-        

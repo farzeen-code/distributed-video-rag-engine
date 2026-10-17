@@ -35,7 +35,15 @@ app = FastAPI(title="RAG Document Q&A", lifespan=lifespan)
 
 @app.get("/")
 def health_check():
-    return {"status": "healthy", "service": "RAG API"}
+    return {
+        "status": "healthy",
+        "service": "RAG API",
+        "worker": {
+            "whisper_model": os.environ.get("WHISPER_MODEL_SIZE", "tiny.en"),
+            "cpu_threads": os.environ.get("WHISPER_CPU_THREADS", "2"),
+            "max_video_seconds": int(os.environ.get("MAX_VIDEO_SECONDS", "600")),
+        },
+    }
 
 origins = [
     "http://localhost:3000",
@@ -93,6 +101,17 @@ async def upload_video_endpoint(file: UploadFile = File(...)):
         "check_status_url": f"/tasks/{task.id}"
     }
     
+def readable_error(info) -> str:
+    if isinstance(info, dict):
+        message = info.get("exc_message")
+        if isinstance(message, (list, tuple)) and message:
+            return " ".join(str(part) for part in message)
+        if isinstance(message, str) and message:
+            return message
+        return str(info.get("exc_type") or "Video processing failed")
+    lines = [line for line in str(info).splitlines() if line.strip()]
+    return lines[-1] if lines else "Video processing failed"
+
 @app.get("/tasks/{task_id}")
 def get_task_status(task_id: str):
     try:
@@ -116,6 +135,7 @@ def get_task_status(task_id: str):
         response["progress"] = meta.get("progress", 25)
         response["message"] = meta.get("step", "Processing video.....")
         response["step"] = meta.get("step", "Processing video.....")
+        response["updated_at"] = meta.get("updated_at")
         
     elif task_result.state == "SUCCESS":
             meta = task_result.info if isinstance(task_result.info, dict) else {}
@@ -124,7 +144,7 @@ def get_task_status(task_id: str):
     
     elif task_result.state == "FAILURE":
         response["progress"] = 0
-        response["error"] = str(task_result.info)
+        response["error"] = readable_error(task_result.info)
     
     return response
     

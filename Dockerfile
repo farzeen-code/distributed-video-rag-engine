@@ -3,12 +3,7 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     C_FORCE_ROOT=1 \
-    MALLOC_ARENA_MAX=1 \
-    OMP_NUM_THREADS=1 \
-    OPENBLAS_NUM_THREADS=1 \
-    MKL_NUM_THREADS=1 \
-    VECLIB_MAXIMUM_THREADS=1 \
-    NUMEXPR_NUM_THREADS=1
+    MALLOC_ARENA_MAX=1
 
 WORKDIR /app
 
@@ -21,7 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
+# Must match the WHISPER_MODEL_SIZE used at runtime, otherwise the first request downloads weights mid-transcription
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('tiny.en', device='cpu', compute_type='int8')"
 
 COPY . .
 
