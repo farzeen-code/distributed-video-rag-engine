@@ -36,8 +36,8 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     broker_connection_retry_on_startup=True,
-    task_soft_time_limit=int(os.environ.get("CELERY_TASK_SOFT_TIME_LIMIT", "1200")),
-    task_time_limit=int(os.environ.get("CELERY_TASK_TIME_LIMIT", "1500")),
+    task_soft_time_limit=int(os.environ.get("CELERY_TASK_SOFT_TIME_LIMIT", "1800")),
+    task_time_limit=int(os.environ.get("CELERY_TASK_TIME_LIMIT", "2100")),
     task_reject_on_worker_lost=True,
 )
 
@@ -106,7 +106,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
                 pass
 
         audio_seconds = get_audio_duration(audio_path)
-        max_seconds = int(os.environ.get("MAX_VIDEO_SECONDS", "180"))
+        max_seconds = int(os.environ.get("MAX_VIDEO_SECONDS", "240"))
         if audio_seconds > max_seconds:
             cap = f"{max_seconds / 60:.1f} minutes" if max_seconds >= 60 else f"{max_seconds} seconds"
             raise ValueError(

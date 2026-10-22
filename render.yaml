@@ -16,8 +16,8 @@ services:
       - key: WHISPER_CPU_THREADS
         value: "1"
       - key: MAX_VIDEO_SECONDS
-        value: "180"
+        value: "240"
       - key: CELERY_TASK_SOFT_TIME_LIMIT
-        value: "1200"
+        value: "1800"
       - key: CELERY_TASK_TIME_LIMIT
-        value: "1500"
+        value: "2100"

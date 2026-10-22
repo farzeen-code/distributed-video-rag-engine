@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://docai-backend-efg3.onrender.com";
 
 // Only used if the backend is still asleep when the page loads; the real ceiling comes from GET / so raising it needs no frontend redeploy.
-const FALLBACK_MAX_VIDEO_SECONDS = 180;
+const FALLBACK_MAX_VIDEO_SECONDS = 240;
 
 function probeVideoDuration(file: File): Promise<number> {
   return new Promise((resolve) => {

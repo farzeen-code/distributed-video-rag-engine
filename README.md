@@ -182,13 +182,13 @@ Whisper's weights and decode buffers must fit in the remainder. When they don't,
 
 | Upload length | Status on Render Free |
 | --- | --- |
-| Up to 1:49 | verified end-to-end |
-| Up to 3 min | the current ceiling (`MAX_VIDEO_SECONDS=180`); untested beyond what is verified above |
+| Up to 3:00 | verified end-to-end |
+| Up to 4:00 | the current ceiling (`MAX_VIDEO_SECONDS=240`); not yet verified |
 | Over the ceiling | refused before the upload finishes, and refused again by the worker after audio extraction |
 
 PDF and DOCX ingestion is unaffected — no FFmpeg, no Whisper, parsed in the request path.
 
-The ceiling is a single deployment variable. `GET /` reports `worker.max_video_seconds`, and the frontend reads it on load, so raising `MAX_VIDEO_SECONDS` in the Render dashboard takes effect without touching frontend code — set it back to `600` for a 10-minute video on a bigger instance. Transcription speed is the other bound: `CELERY_TASK_SOFT_TIME_LIMIT` (default 1200s) fails a task cleanly long before it can spin forever, so raise both together. Longer videos are better handled by running this same image on a machine with a real CPU and 2 GB+ RAM (`docker compose up --build`); no pipeline code changes.
+The ceiling is a single deployment variable. `GET /` reports `worker.max_video_seconds`, and the frontend reads it on load, so raising `MAX_VIDEO_SECONDS` in the Render dashboard takes effect without touching frontend code — set it back to `600` for a 10-minute video on a bigger instance. Transcription speed is the other bound: `CELERY_TASK_SOFT_TIME_LIMIT` (default 1800s) fails a task cleanly long before it can spin forever, so raise both together. Longer videos are better handled by running this same image on a machine with a real CPU and 2 GB+ RAM (`docker compose up --build`); no pipeline code changes.
 
 ---
 
