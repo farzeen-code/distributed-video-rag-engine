@@ -1,6 +1,7 @@
 import os
 import gc
 import time
+import threading
 from celery import Celery
 import sys
 import ssl
@@ -62,6 +63,15 @@ def log_memory(stage: str):
     mem = read_memory()
     print(f"[MEM] {stage}: rss={mem['rss_mb']}MB peak={mem['peak_mb']}MB", flush=True)
 
+def start_memory_watcher(interval: int = 15) -> "threading.Event":
+    # Segment-based samples go silent while Whisper is busy, which is exactly when a kill happens.
+    stop = threading.Event()
+    def watch():
+        while not stop.wait(interval):
+            log_memory("watcher")
+    threading.Thread(target=watch, daemon=True).start()
+    return stop
+
 @celery_app.task(bind=True)
 def process_video_task(self, video_path: str, original_filename: str):   #self: each instance of a task
     video_path = os.path.abspath(video_path)
@@ -69,7 +79,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
     audio_path = f"{base_name}_temp.wav"
     
     try:
-        from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model, get_audio_duration
+        from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model, get_audio_duration, get_whisper_model
 
         log_memory("task start")
 
@@ -110,7 +120,15 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             log_memory(f"transcribing {pct}%")
             report(pct, msg)
 
-        segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress, progress_start=45, progress_end=75)
+        # Load the weights here so the sample lands after they are resident; transcribe reuses the cached instance.
+        get_whisper_model()
+        log_memory("after model load")
+
+        stop_watching = start_memory_watcher()
+        try:
+            segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress, progress_start=45, progress_end=75)
+        finally:
+            stop_watching.set()
         
         # Free Whisper RAM completely before starting ChromaDB embeddings
         unload_whisper_model()
