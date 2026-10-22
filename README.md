@@ -8,7 +8,7 @@
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-FF6600?style=for-the-badge)](https://www.trychroma.com/)
 [![Whisper](https://img.shields.io/badge/OpenAI%20Whisper-000000?style=for-the-badge&logo=openai&logoColor=white)](https://github.com/openai/whisper)
 
-An enterprise-grade, microservice-decoupled **Multimodal Retrieval-Augmented Generation (RAG) Engine** capable of processing large PDF/DOCX documents as well as long-form video uploads (`.mp4`, `.mkv`, `.webm`). Features an asynchronous event-driven worker queue (**Redis + Celery**), **FFmpeg** audio extraction, **INT8 quantized Whisper** speech-to-text transcription, **ChromaDB** vector storage, and **Gemini** temporal citation Q&A (`[MM:SS]`).
+An enterprise-grade, microservice-decoupled **Multimodal Retrieval-Augmented Generation (RAG) Engine** capable of processing large PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`; see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)). Features an asynchronous event-driven worker queue (**Redis + Celery**), **FFmpeg** audio extraction, **INT8 quantized Whisper** speech-to-text transcription, **ChromaDB** vector storage, and **Gemini** temporal citation Q&A (`[MM:SS]`).
 
 ---
 
@@ -166,10 +166,31 @@ Access the interactive API documentation at: **`http://localhost:8000/docs`**
 
 ---
 
-## 📄 License
-Distributed under the MIT License.
-```
+## ⚖️ Free-Tier Limits — What Video Lengths Actually Work
+
+Video ingestion is bounded by RAM, not by code. `start.sh` runs the FastAPI gateway and the Celery worker as **two Python processes inside one container**, so they share Render Free's single **512 MB** budget, and its **0.1 vCPU** sets the transcription speed.
+
+Measured on Render Free with `tiny.en`, INT8, one thread:
+
+| Process | Resident memory |
+| --- | --- |
+| FastAPI gateway (idle) | 142 MB |
+| Celery worker (before any audio) | 103 MB |
+| **Baseline the model must fit under** | **~245 MB of 512 MB** |
+
+Whisper's weights and decode buffers must fit in the remainder. When they don't, Render SIGKILLs the container, and the task freezes at its last progress step — which looks like a hang in the UI rather than a crash. `GET /` reports the gateway's live figure under `api_memory`, and the worker logs `[MEM] <stage>: rss=..MB` per stage.
+
+| Upload length | Status on Render Free |
+| --- | --- |
+| Up to 30 s | verified end-to-end |
+| 30-120 s | the configured ceiling (`MAX_VIDEO_SECONDS=120`); no long-video measurement on this tier yet |
+| Over 120 s | refused before the upload finishes, and refused again by the worker after audio extraction |
+
+PDF and DOCX ingestion is unaffected — no FFmpeg, no Whisper, parsed in the request path.
+
+To raise the ceiling, set `MAX_VIDEO_SECONDS` in the deployment **and** the matching constant in `rag-frontend/src/app/page.tsx` — they are duplicates on purpose, so a file that will be refused never costs a full upload. Longer videos are better handled by running this same image on a machine with a real CPU and 2 GB+ RAM (`docker compose up --build`); no pipeline code changes.
 
 ---
 
-Save `README.md`, commit your changes with git, and push to GitHub! Your repository will look like a professional backend project.
+## 📄 License
+Distributed under the MIT License.
