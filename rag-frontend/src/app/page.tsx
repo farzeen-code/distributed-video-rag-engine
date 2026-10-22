@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://docai-backend-efg3.onrender.com";
 
-const MAX_VIDEO_SECONDS = 600; // mirrors backend MAX_VIDEO_SECONDS so a refused file never costs a full upload
+const MAX_VIDEO_SECONDS = 120; // mirrors backend MAX_VIDEO_SECONDS so a refused file never costs a full upload
 
 function probeVideoDuration(file: File): Promise<number> {
   return new Promise((resolve) => {

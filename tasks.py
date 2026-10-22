@@ -106,11 +106,12 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
                 pass
 
         audio_seconds = get_audio_duration(audio_path)
-        max_seconds = int(os.environ.get("MAX_VIDEO_SECONDS", "600"))
+        max_seconds = int(os.environ.get("MAX_VIDEO_SECONDS", "120"))
         if audio_seconds > max_seconds:
+            cap = f"{max_seconds / 60:.1f} minutes" if max_seconds >= 60 else f"{max_seconds} seconds"
             raise ValueError(
                 f"This video is {audio_seconds / 60:.1f} minutes long, and the free worker caps "
-                f"ingestion at {max_seconds // 60} minutes. Please upload a shorter clip."
+                f"ingestion at {cap}. Please upload a shorter clip."
             )
 
         report(42, "Loading Whisper model")

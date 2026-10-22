@@ -100,6 +100,8 @@ def transcribe_video_audio(
     if progress_callback:
         progress_callback(progress_start, "Decoding audio and warming up Whisper")
 
+    # Keep the decoder's default quality gates: raising no_speech_threshold stops Whisper fast-forwarding
+    # over silent or musical stretches, which turns them into full decode passes on Render's 0.1 vCPU.
     segments, info = model.transcribe(
         audio_path, 
         beam_size=1,
@@ -107,12 +109,6 @@ def transcribe_video_audio(
         condition_on_previous_text=False,
         temperature=0,
         language=WHISPER_LANGUAGE,   # None keeps auto-detect; set WHISPER_LANGUAGE=en to skip the detection pass
-        # These three are the decoder's quality gates: it rejects a window when the gzip compression
-        # ratio is high, the mean log-probability is low, or the no-speech probability is high.
-        # temperature=0 removes the fallback ladder that would retry them, so widen the gates instead.
-        compression_ratio_threshold=4.0,
-        log_prob_threshold=-2.0,
-        no_speech_threshold=0.9,
     )
         
     print(f"Detected Language '{info.language}' with probability '{info.language_probability:.2f}'")
