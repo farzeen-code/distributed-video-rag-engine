@@ -46,6 +46,22 @@ if REDIS_URL.startswith("rediss://"):
         redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
     )
 
+def read_memory() -> dict:
+    # Render SIGKILLs the container at 512MB and only reports "exceeded memory limit"; these are the real numbers.
+    try:
+        with open("/proc/self/status") as handle:
+            values = {}
+            for line in handle:
+                if line.startswith(("VmRSS:", "VmHWM:")):
+                    values[line.split()[0]] = int(line.split()[1]) // 1024
+        return {"rss_mb": values.get("VmRSS:", 0), "peak_mb": values.get("VmHWM:", 0)}
+    except Exception:
+        return {"rss_mb": 0, "peak_mb": 0}
+
+def log_memory(stage: str):
+    mem = read_memory()
+    print(f"[MEM] {stage}: rss={mem['rss_mb']}MB peak={mem['peak_mb']}MB", flush=True)
+
 @celery_app.task(bind=True)
 def process_video_task(self, video_path: str, original_filename: str):   #self: each instance of a task
     video_path = os.path.abspath(video_path)
@@ -54,6 +70,8 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
     
     try:
         from video_processing import transcribe_video_audio, extract_audio, unload_whisper_model, get_audio_duration
+
+        log_memory("task start")
 
         if not os.path.exists(video_path):
             raise FileNotFoundError(
@@ -68,6 +86,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         report(38, "Extracting audio with FFmpeg")
         print(f"[{self.request.id}] Extracting audio from {video_path}", flush=True)
         extract_audio(video_path, audio_path)
+        log_memory("after ffmpeg")
 
         # To ensure that render memory does not exceed limit, dump the file as soon as it is transcribed
         if os.path.exists(video_path):
@@ -88,6 +107,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         print(f"[{self.request.id}] Transcribing {audio_seconds:.0f}s of audio", flush=True)
 
         def update_whisper_progress(pct: int, msg: str):
+            log_memory(f"transcribing {pct}%")
             report(pct, msg)
 
         segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress, progress_start=45, progress_end=75)
@@ -100,6 +120,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception:
             pass
+        log_memory("after whisper unload")
 
         if not segments:
             raise ValueError("No speech was detected in the audio file")
@@ -114,12 +135,22 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         
         from vector_store import add_chunk
         add_chunk(formatted_chunks, original_filename.lower())
+        log_memory("after chromadb index")
         
+        coverage_pct = 0
+        if audio_seconds > 0 and segments:
+            coverage_pct = round(min(segments[-1].get("end_seconds", 0.0) / audio_seconds, 1.0) * 100)
+
+        completion_message = f"Successfully indexed {len(formatted_chunks)} video segments with timestamps"
+        if coverage_pct and coverage_pct < 80:
+            completion_message += f" - warning: only {coverage_pct}% of the audio was transcribed"
+
         return{
             "status": "COMPLETED",
             "filename": original_filename,
             "total_segments": len(formatted_chunks),
-            "message": f"Successfully indexed {len(formatted_chunks)} video segments with timestamps", 
+            "transcript_coverage_percent": coverage_pct,
+            "message": completion_message, 
         }
         
     except Exception as e:

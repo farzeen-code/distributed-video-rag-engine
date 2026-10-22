@@ -6,7 +6,9 @@ from faster_whisper import WhisperModel
 WHISPER_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "tiny.en")
 FFMPEG_TIMEOUT_SECONDS = int(os.environ.get("FFMPEG_TIMEOUT_SECONDS", "900"))
 # CTranslate2 is sized by its own cpu_threads argument; the OMP_NUM_THREADS family does not reach it.
-CPU_THREADS = int(os.environ.get("WHISPER_CPU_THREADS", "2"))
+# More than one thread multiplies Whisper's decode buffers, and the API process shares this container's 512MB.
+CPU_THREADS = int(os.environ.get("WHISPER_CPU_THREADS", "1"))
+WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE") or None
 
 model_instance = None
 
@@ -103,7 +105,9 @@ def transcribe_video_audio(
         beam_size=1,
         vad_filter=False,           # VAD disabled — saves ~80MB Silero ONNX runtime RAM
         condition_on_previous_text=False,
-        temperature=0
+        temperature=0,
+        language=WHISPER_LANGUAGE,   # None keeps auto-detect; set WHISPER_LANGUAGE=en to skip the detection pass
+        suppress_validation=True    # keep decoding after segments fail the compression/log-prob checks
     )
         
     print(f"Detected Language '{info.language}' with probability '{info.language_probability:.2f}'")
@@ -123,6 +127,7 @@ def transcribe_video_audio(
         results.append({
             "start": start_fmt,
             "end": end_fmt,
+            "end_seconds": round(float(segment.end), 2),
             "timestamp_label": f"[{start_fmt} - {end_fmt}]",
             "text": text
         })
@@ -133,4 +138,13 @@ def transcribe_video_audio(
                 last_percent = percent
                 progress_callback(percent, f"Transcribing audio with Whisper ({end_fmt} / {format_timestamp(total_duration)})")
             
+    if results:
+        coverage = results[-1]["end_seconds"] / total_duration
+        if coverage < 0.8:
+            print(
+                f"WARNING: transcription stopped at {format_timestamp(results[-1]['end_seconds'])} "
+                f"of {format_timestamp(total_duration)} ({coverage * 100:.0f}% of audio covered). "
+                "Everything after that point is NOT indexed.",
+                flush=True,
+            )
     return results
