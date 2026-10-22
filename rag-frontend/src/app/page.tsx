@@ -480,6 +480,9 @@ export default function Home() {
                   )}
                 </div>
               </div>
+              <p className={`text-[10px] font-mono mt-1.5 ${theme.textMuted}`}>
+                Video cap on this deployment: {(maxVideoSeconds / 60).toFixed(1)} min
+              </p>
             </div>
           </label>
 

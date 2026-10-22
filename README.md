@@ -8,17 +8,19 @@
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-FF6600?style=for-the-badge)](https://www.trychroma.com/)
 [![Whisper](https://img.shields.io/badge/OpenAI%20Whisper-000000?style=for-the-badge&logo=openai&logoColor=white)](https://github.com/openai/whisper)
 
-An enterprise-grade, microservice-decoupled **Multimodal Retrieval-Augmented Generation (RAG) Engine** capable of processing large PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`; see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)). Features an asynchronous event-driven worker queue (**Redis + Celery**), **FFmpeg** audio extraction, **INT8 quantized Whisper** speech-to-text transcription, **ChromaDB** vector storage, and **Gemini** temporal citation Q&A (`[MM:SS]`).
+An enterprise-grade, microservice-decoupled **Multimodal Retrieval-Augmented Generation (RAG) Engine** capable of processing large PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`) — **up to 4 minutes on the free tier**, see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work). Features an asynchronous event-driven worker queue (**Redis + Celery**), **FFmpeg** audio extraction, **INT8 quantized Whisper** speech-to-text transcription, **ChromaDB** vector storage, and **Gemini** temporal citation Q&A (`[MM:SS]`).
 
 ---
 
 ## 🌟 Key Architectural & Engineering Highlights
 
 ### 1. 🚀 Asynchronous Distributed Video Processing (Producer-Consumer Pattern)
-Heavy video processing is completely decoupled from the web server thread to prevent API latency degradation or Out-of-Memory (OOM) crashes:
+Heavy video processing runs outside the request path so the API stays responsive while a job is queued:
 - **FastAPI Gateway (Producer)**: Accepts video uploads via chunked streaming (`shutil.copyfileobj`), writes to shared storage, and enqueues a lightweight JSON ticket to Redis in **$<200\text{ms}$**.
 - **Redis Message Broker**: Manages queued jobs and stores task state metadata.
 - **Celery Worker Pool (Consumer)**: Isolated background worker process that consumes tickets, executes FFmpeg audio extraction, and runs Whisper transcription without blocking web traffic.
+
+The isolation is by *process*, not by machine: `start.sh` runs the gateway and the worker inside one container, so they still share a single memory budget — which is what actually bounds video length (see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)).
 
 ### 2. 🎧 16kHz Mono Audio Extraction via FFmpeg Subprocess
 Invokes an uncompressed PCM 16-bit WAV conversion (`-ar 16000 -ac 1 -vn`) via Python `subprocess`. Converting stereo/48kHz audio to 16kHz mono cuts raw audio data size by **50%** and eliminates CPU decoding overhead for the AI model.
@@ -174,21 +176,23 @@ Measured on Render Free with `tiny.en`, INT8, one thread:
 
 | Process | Resident memory |
 | --- | --- |
-| FastAPI gateway (idle) | 142 MB |
+| FastAPI gateway (cold, no query yet) | 142 MB |
+| FastAPI gateway (after queries load ChromaDB) | 195 MB |
 | Celery worker (before any audio) | 103 MB |
-| **Baseline the model must fit under** | **~245 MB of 512 MB** |
+| **Baseline the model must fit under** | **~245-300 MB of 512 MB** |
 
-Whisper's weights and decode buffers must fit in the remainder. When they don't, Render SIGKILLs the container, and the task freezes at its last progress step — which looks like a hang in the UI rather than a crash. `GET /` reports the gateway's live figure under `api_memory`, and the worker logs `[MEM] <stage>: rss=..MB` per stage.
+Whisper's weights and decode buffers must fit in the remainder. When they don't, Render SIGKILLs the container, and the task freezes at its last progress step — which looks like a hang in the UI rather than a crash. `GET /` reports the gateway's live figure under `api_memory`, and the worker logs `[MEM] <stage>: rss=..MB` every 15 seconds while decoding.
 
 | Upload length | Status on Render Free |
 | --- | --- |
-| Up to 3:00 | verified end-to-end |
-| Up to 4:00 | the current ceiling (`MAX_VIDEO_SECONDS=240`); not yet verified |
-| Over the ceiling | refused before the upload finishes, and refused again by the worker after audio extraction |
+| Up to 4:00 | accepted and indexed (`MAX_VIDEO_SECONDS=240`) |
+| Over 4:00 | refused before the upload finishes, and refused again by the worker after audio extraction |
+
+**Indexed is not the same as fully transcribed.** The worker compares the last segment's timestamp against the audio length and reports `transcript_coverage_percent`, which the upload toast shows as *"warning: only X% of the audio was transcribed"* when it falls under 80%. Longer clips should be judged by that number, not by a green progress bar — and the ceiling above reflects accepted uploads, not yet an audited coverage figure at 4:00.
 
 PDF and DOCX ingestion is unaffected — no FFmpeg, no Whisper, parsed in the request path.
 
-The ceiling is a single deployment variable. `GET /` reports `worker.max_video_seconds`, and the frontend reads it on load, so raising `MAX_VIDEO_SECONDS` in the Render dashboard takes effect without touching frontend code — set it back to `600` for a 10-minute video on a bigger instance. Transcription speed is the other bound: `CELERY_TASK_SOFT_TIME_LIMIT` (default 1800s) fails a task cleanly long before it can spin forever, so raise both together. Longer videos are better handled by running this same image on a machine with a real CPU and 2 GB+ RAM (`docker compose up --build`); no pipeline code changes.
+The ceiling is a single deployment variable. `GET /` reports `worker.max_video_seconds`, and the frontend reads it on load, so raising `MAX_VIDEO_SECONDS` in the Render dashboard takes effect without touching frontend code. Speed is the other bound: `CELERY_TASK_SOFT_TIME_LIMIT` (default 1800s) fails a task cleanly long before it can spin forever, so raise both together. Going past 4 minutes on this tier is unmeasured territory — the honest way to handle longer videos is running this same image on a machine with a real CPU and 2 GB+ RAM (`docker compose up --build`), where no pipeline code changes.
 
 ---
 
