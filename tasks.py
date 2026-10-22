@@ -106,7 +106,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
                 pass
 
         audio_seconds = get_audio_duration(audio_path)
-        max_seconds = int(os.environ.get("MAX_VIDEO_SECONDS", "120"))
+        max_seconds = int(os.environ.get("MAX_VIDEO_SECONDS", "180"))
         if audio_seconds > max_seconds:
             cap = f"{max_seconds / 60:.1f} minutes" if max_seconds >= 60 else f"{max_seconds} seconds"
             raise ValueError(

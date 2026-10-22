@@ -5,7 +5,8 @@ import ReactMarkdown from "react-markdown";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://docai-backend-efg3.onrender.com";
 
-const MAX_VIDEO_SECONDS = 120; // mirrors backend MAX_VIDEO_SECONDS so a refused file never costs a full upload
+// Only used if the backend is still asleep when the page loads; the real ceiling comes from GET / so raising it needs no frontend redeploy.
+const FALLBACK_MAX_VIDEO_SECONDS = 180;
 
 function probeVideoDuration(file: File): Promise<number> {
   return new Promise((resolve) => {
@@ -58,14 +59,21 @@ export default function Home() {
   // ── Interactive Settings State ──
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [videoPosition, setVideoPosition] = useState<"stacked" | "split">("stacked");
+  const [maxVideoSeconds, setMaxVideoSeconds] = useState(FALLBACK_MAX_VIDEO_SECONDS);
 
   useEffect(() => {
     setSessionId("session_" + Math.random().toString(36).substring(2, 9));
   }, []);
 
-  // Ping backend on load
+  // Ping backend on load and read the ceiling it enforces
   useEffect(() => {
-    fetch(`${API_URL}/`).catch(() => {});
+    fetch(`${API_URL}/`)
+      .then((res) => res.json())
+      .then((data) => {
+        const cap = data?.worker?.max_video_seconds;
+        if (typeof cap === "number" && cap > 0) setMaxVideoSeconds(cap);
+      })
+      .catch(() => {});
   }, []);
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -103,8 +111,8 @@ export default function Home() {
 
     if (isVideo) {
       const durationSec = await probeVideoDuration(selectedFile);
-      if (durationSec > MAX_VIDEO_SECONDS) {
-        setUploadStatus(`Error: This video is ${(durationSec / 60).toFixed(1)} min. The free worker caps uploads at ${MAX_VIDEO_SECONDS / 60} minutes.`);
+      if (durationSec > maxVideoSeconds) {
+        setUploadStatus(`Error: This video is ${(durationSec / 60).toFixed(1)} min. This deployment caps uploads at ${(maxVideoSeconds / 60).toFixed(1)} min.`);
         setIsUploading(false);
         return;
       }

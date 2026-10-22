@@ -41,7 +41,7 @@ def health_check():
         "worker": {
             "whisper_model": os.environ.get("WHISPER_MODEL_SIZE", "tiny.en"),
             "cpu_threads": os.environ.get("WHISPER_CPU_THREADS", "1"),
-            "max_video_seconds": int(os.environ.get("MAX_VIDEO_SECONDS", "120")),
+            "max_video_seconds": int(os.environ.get("MAX_VIDEO_SECONDS", "180")),
         },
         "api_memory": read_memory(),
     }
