@@ -214,7 +214,7 @@ export default function Home() {
                 mode: "video",
                 type: "video",
               });
-              setUploadStatus("Video indexed successfully.");
+              setUploadStatus(pollData.result?.message || "Video indexed successfully.");
               setTimeout(() => {
                 setUploadStatus("");
                 setVideoProgress(0);
@@ -341,6 +341,14 @@ export default function Home() {
       const isNetwork = err instanceof TypeError;
       if (isNetwork) {
         setServerError(true);
+        setQuestion(queryText);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "⚠️ Could not reach the server - it was probably asleep. Your question is back in the input box, send it once more in about 30s.",
+          },
+        ]);
         let secs = 30;
         setRetryCountdown(secs);
         retryTimerRef.current = setInterval(() => {
@@ -685,6 +693,11 @@ export default function Home() {
               Send
             </button>
           </form>
+          {serverError && (
+            <p className={`text-[11px] font-mono text-center mt-2 ${isDarkMode ? "text-rose-400" : "text-rose-600"}`}>
+              Server is waking up · you can send again in {retryCountdown}s
+            </p>
+          )}
         </div>
       </main>
     </div>
