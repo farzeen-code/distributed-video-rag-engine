@@ -78,18 +78,33 @@ def read_memory() -> dict:
             continue
         break
 
+    limit_mb = 0
+    for limit_path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(limit_path) as handle:
+                raw = handle.read().strip()
+            if raw != "max":
+                bytes_limit = int(raw)
+                # An "unlimited" cgroup reports a huge sentinel; only a real cap is worth acting on.
+                if 0 < bytes_limit < 64 * 1024 * 1024 * 1024:
+                    limit_mb = bytes_limit // (1024 * 1024)
+            break
+        except Exception:
+            continue
+
     return {
         "rss_mb": values.get("VmRSS:", 0),
         "peak_mb": values.get("VmHWM:", 0),
         "container_mb": container_mb,
         "container_anon_mb": anon_mb,
+        "limit_mb": limit_mb,
     }
 
 def log_memory(stage: str):
     mem = read_memory()
     print(
         f"[MEM] {stage}: rss={mem['rss_mb']}MB peak={mem['peak_mb']}MB "
-        f"container={mem['container_mb']}MB anon={mem['container_anon_mb']}MB",
+        f"container={mem['container_mb']}MB anon={mem['container_anon_mb']}MB limit={mem['limit_mb']}MB",
         flush=True,
     )
 
@@ -151,6 +166,23 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             log_memory(f"transcribing {pct}%")
             report(pct, msg)
 
+        # Refuse before the load instead of letting Render SIGKILL the container mid-decode.
+        before_load = read_memory()
+        load_cost = int(os.environ.get("WHISPER_LOAD_COST_MB", "280"))
+        minutes = int(audio_seconds // 60) + 1
+        decode_reserve = max(
+            int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "20")) * minutes,
+            int(os.environ.get("WHISPER_DECODE_RESERVE_MIN_MB", "60")),
+        )
+        limit = before_load["limit_mb"]
+        if limit and before_load["container_anon_mb"] + load_cost > limit - decode_reserve:
+            free_mb = limit - before_load["container_anon_mb"]
+            raise ValueError(
+                f"Not enough memory is free to transcribe {minutes} minute(s) of audio: {free_mb}MB available, "
+                f"~{load_cost + decode_reserve}MB needed. The API holds memory from recent queries or uploads, "
+                "so re-uploading in a few minutes should work."
+            )
+
         # Load the weights here so the sample lands after they are resident; transcribe reuses the cached instance.
         get_whisper_model()
         log_memory("after model load")
@@ -183,7 +215,13 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         print(f"[{self.request.id}] Ingesting {len(formatted_chunks)} timestamped chunks into the ChromaDB...", flush=True)
         
         from vector_store import add_chunk
-        add_chunk(formatted_chunks, original_filename.lower())
+
+        # Embedding over the network is the slowest stage and previously sent no heartbeat,
+        # which made the UI declare a stall on runs that had actually succeeded.
+        def report_indexing(fraction: float, msg: str):
+            report(80 + int(fraction * 15), msg)
+
+        add_chunk(formatted_chunks, original_filename.lower(), progress_callback=report_indexing)
         log_memory("after chromadb index")
         
         coverage_pct = 0

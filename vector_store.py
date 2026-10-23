@@ -51,7 +51,7 @@ small_doc_threshold = 200
 
 small_docs = db["small_documents"]
 
-def add_chunk(chunks, filename):
+def add_chunk(chunks, filename, progress_callback=None):
     if not chunks:
         return
 
@@ -73,6 +73,9 @@ def add_chunk(chunks, filename):
         batch_ids = [hashlib.md5((f"{filename}_{i + j}_{chunk}").encode()).hexdigest() for j, chunk in enumerate(batch)]
         batch_metadatas = [{"source": filename} for _ in batch]
         collection.upsert(documents=batch, ids=batch_ids, metadatas=batch_metadatas)
+        if progress_callback:
+            done = min(i + len(batch), len(valid_chunks))
+            progress_callback(done / len(valid_chunks), f"Embedded {done} of {len(valid_chunks)} segments")
 
     # Force immediate memory reclamation after embedding calculations
     try:
