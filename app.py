@@ -3,10 +3,11 @@ import os
 import uuid
 import shutil
 import gc
+import ctypes
 import docx
 import time
 from pypdf import PdfReader
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from generate import generate_answer
 from memory import add_message, get_history, init_db
@@ -45,6 +46,15 @@ def health_check():
         },
         "api_memory": read_memory(),
     }
+
+def release_memory():
+    # glibc keeps freed pages in its arenas, so gc.collect() alone leaves api_memory high.
+    # MALLOC_ARENA_MAX=1 makes trim effective; the worker needs that headroom for the Whisper load peak.
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
 
 origins = [
     "http://localhost:3000",
@@ -218,7 +228,7 @@ def delete_document_endpoint(request: DeleteRequest):
     return {"status": "ok", "deleted": request.filename}
 
 @app.post("/query")
-def queryDocument(request: QueryRequest):
+def queryDocument(request: QueryRequest, background: BackgroundTasks):
     from vector_store import get_context
     safe_filename = request.filename.lower() if request.filename else None
 
@@ -247,7 +257,7 @@ def queryDocument(request: QueryRequest):
         add_message(request.session_id, "assistant", answer)
         print(f"Saving history: {time.time() - t3:.2f}s")
 
-    gc.collect()
+    background.add_task(release_memory)
 
     return {"answer": answer, "sources": relevant_chunks}
 

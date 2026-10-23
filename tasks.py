@@ -48,20 +48,50 @@ if REDIS_URL.startswith("rediss://"):
     )
 
 def read_memory() -> dict:
-    # Render SIGKILLs the container at 512MB and only reports "exceeded memory limit"; these are the real numbers.
+    # Render kills on the container total, not per process: the gateway, the worker and FFmpeg all draw from one 512MB.
     try:
         with open("/proc/self/status") as handle:
             values = {}
             for line in handle:
                 if line.startswith(("VmRSS:", "VmHWM:")):
                     values[line.split()[0]] = int(line.split()[1]) // 1024
-        return {"rss_mb": values.get("VmRSS:", 0), "peak_mb": values.get("VmHWM:", 0)}
     except Exception:
-        return {"rss_mb": 0, "peak_mb": 0}
+        values = {}
+
+    container_mb = 0
+    anon_mb = 0
+    # The cgroup total counts page cache, which ChromaDB's sqlite reads inflate. anon is the part
+    # Render cannot reclaim, so that is the number to compare against 512MB when guessing a kill point.
+    for usage_path, stat_path, key in (
+        ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.stat", "anon"),
+        ("/sys/fs/cgroup/memory/memory.usage_in_bytes", "/sys/fs/cgroup/memory/memory.stat", "total_rss"),
+    ):
+        try:
+            with open(usage_path) as handle:
+                container_mb = int(handle.read().strip()) // (1024 * 1024)
+            with open(stat_path) as handle:
+                for line in handle:
+                    if line.startswith(key + " "):
+                        anon_mb = int(line.split()[1]) // (1024 * 1024)
+                        break
+        except Exception:
+            continue
+        break
+
+    return {
+        "rss_mb": values.get("VmRSS:", 0),
+        "peak_mb": values.get("VmHWM:", 0),
+        "container_mb": container_mb,
+        "container_anon_mb": anon_mb,
+    }
 
 def log_memory(stage: str):
     mem = read_memory()
-    print(f"[MEM] {stage}: rss={mem['rss_mb']}MB peak={mem['peak_mb']}MB", flush=True)
+    print(
+        f"[MEM] {stage}: rss={mem['rss_mb']}MB peak={mem['peak_mb']}MB "
+        f"container={mem['container_mb']}MB anon={mem['container_anon_mb']}MB",
+        flush=True,
+    )
 
 def start_memory_watcher(interval: int = 15) -> "threading.Event":
     # Segment-based samples go silent while Whisper is busy, which is exactly when a kill happens.
