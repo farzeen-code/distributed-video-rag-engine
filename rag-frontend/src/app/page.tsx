@@ -236,7 +236,7 @@ export default function Home() {
               });
               setUploadStatus(pollData.result?.message || "Video indexed successfully.");
               setTimeout(() => {
-                setUploadStatus("");
+                // uploadStatus stays: it now carries the container peak, which is the number worth reading later
                 setVideoProgress(0);
                 setVideoStep("");
                 setVideoElapsed(0);

@@ -107,6 +107,7 @@ def log_memory(stage: str):
         f"container={mem['container_mb']}MB anon={mem['container_anon_mb']}MB limit={mem['limit_mb']}MB",
         flush=True,
     )
+    return mem
 
 WHISPER_LOAD_COST_MB = int(os.environ.get("WHISPER_LOAD_COST_MB", "276"))
 WHISPER_DECODE_MB_PER_MINUTE = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "16"))
@@ -125,14 +126,22 @@ def affordable_video_seconds() -> int:
     minutes = (free_mb - WHISPER_LOAD_COST_MB) // WHISPER_DECODE_MB_PER_MINUTE
     return max(0, int(minutes)) * 60
 
-def start_memory_watcher(interval: int = 15) -> "threading.Event":
+def start_memory_watcher(interval: int = 15, peak: dict = None) -> "threading.Event":
     # Segment-based samples go silent while Whisper is busy, which is exactly when a kill happens.
     stop = threading.Event()
     def watch():
         while not stop.wait(interval):
-            log_memory("watcher")
+            mem = log_memory("watcher")
+            record_peak(peak, mem)
     threading.Thread(target=watch, daemon=True).start()
     return stop
+
+def record_peak(peak: dict, mem: dict):
+    if peak is None:
+        return
+    peak["container_anon_mb"] = max(peak.get("container_anon_mb", 0), mem["container_anon_mb"])
+    peak["rss_mb"] = max(peak.get("rss_mb", 0), mem["peak_mb"])
+    peak["limit_mb"] = mem["limit_mb"]
 
 @celery_app.task(bind=True)
 def process_video_task(self, video_path: str, original_filename: str):   #self: each instance of a task
@@ -179,8 +188,12 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         report(42, "Loading Whisper model")
         print(f"[{self.request.id}] Transcribing {audio_seconds:.0f}s of audio", flush=True)
 
+        # The peak is what decides the real video ceiling, so it goes back with the result instead of
+        # only living in log output nobody has to filter to read.
+        peak_seen = {}
+
         def update_whisper_progress(pct: int, msg: str):
-            log_memory(f"transcribing {pct}%")
+            record_peak(peak_seen, log_memory(f"transcribing {pct}%"))
             report(pct, msg)
 
         # Refuse before the load instead of letting Render SIGKILL the container mid-decode. This is the same
@@ -196,9 +209,9 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
 
         # Load the weights here so the sample lands after they are resident; transcribe reuses the cached instance.
         get_whisper_model()
-        log_memory("after model load")
+        record_peak(peak_seen, log_memory("after model load"))
 
-        stop_watching = start_memory_watcher()
+        stop_watching = start_memory_watcher(peak=peak_seen)
         try:
             segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress, progress_start=45, progress_end=75)
         finally:
@@ -240,6 +253,8 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             coverage_pct = round(min(segments[-1].get("end_seconds", 0.0) / audio_seconds, 1.0) * 100)
 
         completion_message = f"Successfully indexed {len(formatted_chunks)} video segments with timestamps"
+        if peak_seen.get("container_anon_mb") and peak_seen.get("limit_mb"):
+            completion_message += f" (container peaked at {peak_seen['container_anon_mb']}MB of {peak_seen['limit_mb']}MB)"
         if coverage_pct and coverage_pct < 80:
             completion_message += f" - warning: only {coverage_pct}% of the audio was transcribed"
 
@@ -248,6 +263,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             "filename": original_filename,
             "total_segments": len(formatted_chunks),
             "transcript_coverage_percent": coverage_pct,
+            "peak_memory": peak_seen,
             "message": completion_message, 
         }
         
