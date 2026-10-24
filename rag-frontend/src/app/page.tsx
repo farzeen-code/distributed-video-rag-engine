@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://docai-backend-efg3.onrender.com";
@@ -66,15 +66,27 @@ export default function Home() {
   }, []);
 
   // Ping backend on load and read the ceiling it enforces
-  useEffect(() => {
-    fetch(`${API_URL}/`)
-      .then((res) => res.json())
-      .then((data) => {
-        const cap = data?.worker?.max_video_seconds;
-        if (typeof cap === "number" && cap > 0) setMaxVideoSeconds(cap);
-      })
-      .catch(() => {});
+  const refreshVideoCap = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/`);
+      const data = await res.json();
+      const cap = data?.worker?.max_video_seconds;
+      if (typeof cap === "number" && cap > 0) setMaxVideoSeconds(cap);
+    } catch {
+      // Backend may be asleep; keep the last known cap rather than showing 0.
+    }
   }, []);
+
+  useEffect(() => {
+    refreshVideoCap();
+  }, [refreshVideoCap]);
+
+  // The cap is derived from live container headroom, so it shrinks as the gateway holds memory.
+  // Re-read it when the upload drawer opens rather than polling — idle requests would keep a
+  // free-tier container awake and warm, which is exactly what lowers the cap.
+  useEffect(() => {
+    if (sidebarOpen) refreshVideoCap();
+  }, [sidebarOpen, refreshVideoCap]);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
