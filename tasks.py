@@ -1,5 +1,6 @@
 import os
 import gc
+import math
 import time
 import threading
 from celery import Celery
@@ -167,20 +168,19 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             report(pct, msg)
 
         # Refuse before the load instead of letting Render SIGKILL the container mid-decode.
+        # Constants are the measured cost of tiny.en int8 on this tier: loading is ~276MB regardless of
+        # length, and a 4:00 clip reached ~438MB anon from a 162MB start, so decode is ~16MB/minute.
         before_load = read_memory()
-        load_cost = int(os.environ.get("WHISPER_LOAD_COST_MB", "280"))
-        minutes = int(audio_seconds // 60) + 1
-        decode_reserve = max(
-            int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "20")) * minutes,
-            int(os.environ.get("WHISPER_DECODE_RESERVE_MIN_MB", "60")),
-        )
+        load_cost = int(os.environ.get("WHISPER_LOAD_COST_MB", "276"))
+        minutes = max(1, math.ceil(audio_seconds / 60))
+        decode_reserve = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "16")) * minutes
         limit = before_load["limit_mb"]
-        if limit and before_load["container_anon_mb"] + load_cost > limit - decode_reserve:
-            free_mb = limit - before_load["container_anon_mb"]
+        free_mb = limit - before_load["container_anon_mb"]
+        if limit and load_cost + decode_reserve > free_mb:
             raise ValueError(
-                f"Not enough memory is free to transcribe {minutes} minute(s) of audio: {free_mb}MB available, "
-                f"~{load_cost + decode_reserve}MB needed. The API holds memory from recent queries or uploads, "
-                "so re-uploading in a few minutes should work."
+                f"{minutes} minute(s) of audio needs ~{load_cost + decode_reserve}MB free and only {free_mb}MB is "
+                "available. Whisper costs the same to load at any length, so only a shorter clip fits right now - "
+                "the gateway gives its memory back when the service restarts, not between requests."
             )
 
         # Load the weights here so the sample lands after they are resident; transcribe reuses the cached instance.
