@@ -1,6 +1,5 @@
 import os
 import gc
-import math
 import time
 import threading
 from celery import Celery
@@ -109,6 +108,23 @@ def log_memory(stage: str):
         flush=True,
     )
 
+WHISPER_LOAD_COST_MB = int(os.environ.get("WHISPER_LOAD_COST_MB", "276"))
+WHISPER_DECODE_MB_PER_MINUTE = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "16"))
+
+def affordable_video_seconds() -> int:
+    """
+    Length of audio that fits alongside whatever this container is already holding. Loading tiny.en
+    costs the same at any length, so headroom left over buys whole minutes of decode at 16MB each.
+    Returns 0 when there is no cgroup data, meaning the caller should fall back to the configured cap.
+    """
+    mem = read_memory()
+    limit = mem["limit_mb"]
+    if not limit:
+        return 0
+    free_mb = limit - mem["container_anon_mb"]
+    minutes = (free_mb - WHISPER_LOAD_COST_MB) // WHISPER_DECODE_MB_PER_MINUTE
+    return max(0, int(minutes)) * 60
+
 def start_memory_watcher(interval: int = 15) -> "threading.Event":
     # Segment-based samples go silent while Whisper is busy, which is exactly when a kill happens.
     stop = threading.Event()
@@ -167,20 +183,15 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             log_memory(f"transcribing {pct}%")
             report(pct, msg)
 
-        # Refuse before the load instead of letting Render SIGKILL the container mid-decode.
-        # Constants are the measured cost of tiny.en int8 on this tier: loading is ~276MB regardless of
-        # length, and a 4:00 clip reached ~438MB anon from a 162MB start, so decode is ~16MB/minute.
-        before_load = read_memory()
-        load_cost = int(os.environ.get("WHISPER_LOAD_COST_MB", "276"))
-        minutes = max(1, math.ceil(audio_seconds / 60))
-        decode_reserve = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "16")) * minutes
-        limit = before_load["limit_mb"]
-        free_mb = limit - before_load["container_anon_mb"]
-        if limit and load_cost + decode_reserve > free_mb:
+        # Refuse before the load instead of letting Render SIGKILL the container mid-decode. This is the same
+        # calculation GET / uses for the advertised cap, so the site can never promise a length the worker rejects.
+        affordable = affordable_video_seconds()
+        if affordable and audio_seconds > affordable:
             raise ValueError(
-                f"{minutes} minute(s) of audio needs ~{load_cost + decode_reserve}MB free and only {free_mb}MB is "
-                "available. Whisper costs the same to load at any length, so only a shorter clip fits right now - "
-                "the gateway gives its memory back when the service restarts, not between requests."
+                f"This clip is {audio_seconds / 60:.1f} min and only {affordable // 60} min of audio fits the "
+                f"container right now ({read_memory()['limit_mb']}MB limit, ~{WHISPER_LOAD_COST_MB}MB of that is "
+                "just loading Whisper, at any length). Upload a shorter clip - the gateway gives its memory "
+                "back when the service restarts, not between requests."
             )
 
         # Load the weights here so the sample lands after they are resident; transcribe reuses the cached instance.
