@@ -109,8 +109,12 @@ def log_memory(stage: str):
     )
     return mem
 
-WHISPER_LOAD_COST_MB = int(os.environ.get("WHISPER_LOAD_COST_MB", "276"))
-WHISPER_DECODE_MB_PER_MINUTE = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "16"))
+# Measured across three runs: a 2:20 clip peaked at 324MB of container anon and a 3:54 clip at 304MB, both
+# from a ~185MB baseline. So Whisper's marginal cost is roughly flat at ~120-140MB and does not scale with
+# length the way the 276MB + 16MB/minute model assumed; the only length term is the decoded audio array,
+# which is 16kHz mono float32 at ~3.8MB/minute.
+WHISPER_LOAD_COST_MB = int(os.environ.get("WHISPER_LOAD_COST_MB", "150"))
+WHISPER_DECODE_MB_PER_MINUTE = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "5"))
 
 # GET / measures anon in the gateway while the worker is still idle; by the time the task guards, it has
 # imported faster_whisper/numpy and run FFmpeg, so it sees strictly more. Advertising without this margin
@@ -122,7 +126,7 @@ WHISPER_ADVERTISE_MARGIN_MB = int(os.environ.get("WHISPER_ADVERTISE_MARGIN_MB", 
 def affordable_video_seconds(mem: dict = None, margin_mb: int = 0) -> int:
     """
     Length of audio that fits alongside whatever this container is already holding. Loading tiny.en
-    costs the same at any length, so headroom left over buys whole minutes of decode at 16MB each.
+    costs roughly the same at any length, so the headroom left over buys decode at ~5MB per minute.
     Returns 0 when there is no cgroup data, meaning the caller should fall back to the configured cap.
     """
     mem = mem or read_memory()
