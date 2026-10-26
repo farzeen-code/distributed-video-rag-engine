@@ -17,6 +17,12 @@ services:
         value: "1"
       - key: MAX_VIDEO_SECONDS
         value: "240"
+      # Hard clamp on both the advertised cap and the worker's guard. Raising MAX_VIDEO_SECONDS above this
+      # no longer lets a clip through: it is the longest run this container has actually completed.
+      - key: MAX_VERIFIED_VIDEO_SECONDS
+        value: "240"
+      - key: WHISPER_ABORT_ANON_MB
+        value: "440"
       - key: WHISPER_LOAD_COST_MB
         value: "150"
       - key: WHISPER_DECODE_MB_PER_MINUTE

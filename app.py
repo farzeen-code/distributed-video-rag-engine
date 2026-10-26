@@ -16,7 +16,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from celery.result import AsyncResult
 from pathlib import Path
-from tasks import celery_app, process_video_task, read_memory, affordable_video_seconds, WHISPER_ADVERTISE_MARGIN_MB
+from tasks import (
+    celery_app,
+    process_video_task,
+    read_memory,
+    affordable_video_seconds,
+    abort_threshold_mb,
+    MAX_VERIFIED_VIDEO_SECONDS,
+    WHISPER_ADVERTISE_MARGIN_MB,
+)
 
 MAX_FILE_SIZE = 5 * 1024 * 1024
 
@@ -26,6 +34,10 @@ STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
 MAX_VIDEO_SIZE = 500 * 1024 * 1024
+
+# start.sh boots the gateway and the Celery worker in one container, so this timestamp marks the moment the
+# previous worker died too. Any task whose last heartbeat predates it cannot advance: it is a ghost in Redis.
+CONTAINER_BOOT_TS = time.time()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,15 +49,21 @@ app = FastAPI(title="RAG Document Q&A", lifespan=lifespan)
 @app.get("/")
 def health_check():
     configured = int(os.environ.get("MAX_VIDEO_SECONDS", "240"))
+    # Never advertise above what has actually completed here, however much headroom this reading shows.
+    verified = MAX_VERIFIED_VIDEO_SECONDS
     affordable = affordable_video_seconds(margin_mb=WHISPER_ADVERTISE_MARGIN_MB)
+    candidates = [value for value in (configured, verified, affordable) if value]
+    cap = min(candidates) if candidates else configured
     return {
         "status": "healthy",
         "service": "RAG API",
         "worker": {
             "whisper_model": os.environ.get("WHISPER_MODEL_SIZE", "tiny.en"),
             "cpu_threads": os.environ.get("WHISPER_CPU_THREADS", "1"),
-            "max_video_seconds": min(configured, affordable) if affordable else configured,
+            "max_video_seconds": cap,
             "configured_max_video_seconds": configured,
+            "verified_max_video_seconds": verified,
+            "abort_anon_mb": abort_threshold_mb(read_memory()["limit_mb"]),
         },
         "api_memory": read_memory(),
     }
@@ -146,14 +164,23 @@ def get_task_status(task_id: str):
     
     elif task_result.state == "PROCESSING":
         meta = task_result.info if isinstance(task_result.info, dict) else {}
+        updated_at = meta.get("updated_at")
         response["progress"] = meta.get("progress", 25)
         response["message"] = meta.get("step", "Processing video.....")
         response["step"] = meta.get("step", "Processing video.....")
-        response["updated_at"] = meta.get("updated_at")
+        response["updated_at"] = updated_at
         # The gateway shares the container, so its own cgroup reading is the live number the worker
         # is climbing toward. A SIGKILL leaves no task result behind, so this is the only reading
         # that survives the crash the user is trying to see.
         response["container_memory"] = read_memory()
+        # Gateway and worker boot together, so a heartbeat written before this process started came from a
+        # worker that no longer exists. That run was killed, not slow, and it will never advance again.
+        response["task_stale"] = bool(updated_at and updated_at < CONTAINER_BOOT_TS)
+        if response["task_stale"]:
+            response["step"] = response["message"] = (
+                f"Killed mid-task at {meta.get('progress', 0)}% ({meta.get('step')}): the container restarted, "
+                "so no worker owns this job anymore. Try a shorter clip."
+            )
         
     elif task_result.state == "SUCCESS":
             meta = task_result.info if isinstance(task_result.info, dict) else {}

@@ -208,11 +208,24 @@ export default function Home() {
             } else if (pollData.state === "PROCESSING") {
               setVideoProgress(pollData.progress || 40);
               const mem = pollData.container_memory;
-              const memSuffix =
-                mem?.container_anon_mb && mem?.limit_mb ? ` · ${mem.container_anon_mb}/${mem.limit_mb}MB` : "";
+              // Show the same number the worker budgets against: heap + tmpfs, not heap alone.
+              const used = mem?.container_hard_mb || mem?.container_anon_mb;
+              const memSuffix = used && mem?.limit_mb ? ` · ${used}/${mem.limit_mb}MB` : "";
               const stepText = `${pollData.step || pollData.message || "Processing video..."}${memSuffix}`;
               setVideoStep(stepText);
               setUploadStatus(stepText);
+
+              // The API knows a heartbeat predates its own boot, which means the worker that wrote it died.
+              // Without this the bar sits at 45% forever and the only evidence of the kill is a Render email.
+              if (pollData.task_stale) {
+                if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+                setVideoStep("");
+                setVideoElapsed(0);
+                setStallNotice("");
+                setUploadStatus(`Error: ${stepText}`);
+                setIsUploading(false);
+                return;
+              }
 
               // updated_at is the worker heartbeat; progress is the fallback so older deploys still reset the timer
               const workerTick = pollData.updated_at ?? pollData.progress;
