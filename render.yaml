@@ -17,6 +17,10 @@ services:
         value: "1"
       - key: MAX_VIDEO_SECONDS
         value: "240"
+      - key: WHISPER_LOAD_COST_MB
+        value: "276"
+      - key: WHISPER_ADVERTISE_MARGIN_MB
+        value: "13"
       - key: CELERY_TASK_SOFT_TIME_LIMIT
         value: "1800"
       - key: CELERY_TASK_TIME_LIMIT

@@ -115,7 +115,9 @@ WHISPER_DECODE_MB_PER_MINUTE = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE"
 # GET / measures anon in the gateway while the worker is still idle; by the time the task guards, it has
 # imported faster_whisper/numpy and run FFmpeg, so it sees strictly more. Advertising without this margin
 # over-promises, which is why a 3:54 clip passed the cap check on the page and was refused by the worker.
-WHISPER_ADVERTISE_MARGIN_MB = int(os.environ.get("WHISPER_ADVERTISE_MARGIN_MB", "24"))
+# Advertising now subtracts only what the worker actually spends before the guard samples: a 2:20 clip
+# measured 13MB of import cost. Kept as a variable because it is the one term GET / cannot observe.
+WHISPER_ADVERTISE_MARGIN_MB = int(os.environ.get("WHISPER_ADVERTISE_MARGIN_MB", "13"))
 
 def affordable_video_seconds(mem: dict = None, margin_mb: int = 0) -> int:
     """
