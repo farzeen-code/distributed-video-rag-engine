@@ -207,7 +207,10 @@ export default function Home() {
               setUploadStatus("Queued in background worker...");
             } else if (pollData.state === "PROCESSING") {
               setVideoProgress(pollData.progress || 40);
-              const stepText = pollData.step || pollData.message || "Processing video...";
+              const mem = pollData.container_memory;
+              const memSuffix =
+                mem?.container_anon_mb && mem?.limit_mb ? ` · ${mem.container_anon_mb}/${mem.limit_mb}MB` : "";
+              const stepText = `${pollData.step || pollData.message || "Processing video..."}${memSuffix}`;
               setVideoStep(stepText);
               setUploadStatus(stepText);
 

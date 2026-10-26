@@ -150,6 +150,10 @@ def get_task_status(task_id: str):
         response["message"] = meta.get("step", "Processing video.....")
         response["step"] = meta.get("step", "Processing video.....")
         response["updated_at"] = meta.get("updated_at")
+        # The gateway shares the container, so its own cgroup reading is the live number the worker
+        # is climbing toward. A SIGKILL leaves no task result behind, so this is the only reading
+        # that survives the crash the user is trying to see.
+        response["container_memory"] = read_memory()
         
     elif task_result.state == "SUCCESS":
             meta = task_result.info if isinstance(task_result.info, dict) else {}
