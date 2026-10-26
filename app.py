@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from celery.result import AsyncResult
 from pathlib import Path
-from tasks import celery_app, process_video_task, read_memory, affordable_video_seconds
+from tasks import celery_app, process_video_task, read_memory, affordable_video_seconds, WHISPER_ADVERTISE_MARGIN_MB
 
 MAX_FILE_SIZE = 5 * 1024 * 1024
 
@@ -37,7 +37,7 @@ app = FastAPI(title="RAG Document Q&A", lifespan=lifespan)
 @app.get("/")
 def health_check():
     configured = int(os.environ.get("MAX_VIDEO_SECONDS", "240"))
-    affordable = affordable_video_seconds()
+    affordable = affordable_video_seconds(margin_mb=WHISPER_ADVERTISE_MARGIN_MB)
     return {
         "status": "healthy",
         "service": "RAG API",
