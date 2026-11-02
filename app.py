@@ -22,6 +22,7 @@ from tasks import (
     read_memory,
     affordable_video_seconds,
     abort_threshold_mb,
+    last_mem_sample,
     MAX_VERIFIED_VIDEO_SECONDS,
     WHISPER_ADVERTISE_MARGIN_MB,
 )
@@ -181,6 +182,18 @@ def get_task_status(task_id: str):
                 f"Killed mid-task at {meta.get('progress', 0)}% ({meta.get('step')}): the container restarted, "
                 "so no worker owns this job anymore. Try a shorter clip."
             )
+            last = last_mem_sample()
+            # The worker writes each sample to disk while a task runs, because the run that gets OOM-killed is
+            # the only one that cannot report its own peak. This is the number that says whether the ceiling
+            # moves with clip length or only with what the gateway happened to be holding.
+            if last.get("hard_mb") and updated_at and last.get("recorded_at", 0) >= updated_at - 5:
+                response["last_sample"] = last
+                response["step"] = response["message"] = (
+                    f"Killed mid-task at {meta.get('progress', 0)}%: the worker's last reading before the "
+                    f"restart was {last['hard_mb']}MB of {last.get('limit_mb', '?')}MB "
+                    f"({last.get('anon_mb', 0)}MB heap + {last.get('shmem_mb', 0)}MB tmpfs) during "
+                    f"'{last.get('stage', 'decoding')}'. Try a shorter clip."
+                )
         
     elif task_result.state == "SUCCESS":
             meta = task_result.info if isinstance(task_result.info, dict) else {}

@@ -1,5 +1,6 @@
 import os
 import gc
+import json
 import time
 import threading
 from celery import Celery
@@ -125,6 +126,39 @@ def used_memory_mb(mem: dict) -> int:
     # Falls back to anon on a cgroup v1 host, where the split is not reported.
     return mem.get("container_hard_mb") or mem["container_anon_mb"]
 
+# Set only by the Celery worker while a task is running. An OOM kill takes the process, its stdout and its
+# Redis heartbeat with it, so the only way to learn where a clip actually died is to leave each sample on
+# disk for the next container to read - the killed run cannot report its own peak.
+PERSIST_SAMPLES = False
+MEMORY_SAMPLE_PATH = os.environ.get("MEMORY_SAMPLE_PATH", os.path.join("storage", ".last_mem_sample.json"))
+
+def remember_sample(stage: str, mem: dict):
+    try:
+        os.makedirs(os.path.dirname(MEMORY_SAMPLE_PATH) or ".", exist_ok=True)
+        with open(MEMORY_SAMPLE_PATH, "w") as handle:
+            json.dump(
+                {
+                    "stage": stage,
+                    "recorded_at": time.time(),
+                    "anon_mb": mem["container_anon_mb"],
+                    "shmem_mb": mem["container_shmem_mb"],
+                    "hard_mb": used_memory_mb(mem),
+                    "container_mb": mem["container_mb"],
+                    "limit_mb": mem["limit_mb"],
+                },
+                handle,
+            )
+    except Exception:
+        pass
+
+def last_mem_sample() -> dict:
+    try:
+        with open(MEMORY_SAMPLE_PATH) as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
 def log_memory(stage: str):
     mem = read_memory()
     print(
@@ -133,6 +167,8 @@ def log_memory(stage: str):
         f"shmem={mem['container_shmem_mb']}MB hard={used_memory_mb(mem)}MB limit={mem['limit_mb']}MB",
         flush=True,
     )
+    if PERSIST_SAMPLES:
+        remember_sample(stage, mem)
     return mem
 
 # Two formulas have now been fitted to three noisy peaks and falsified by a Render OOM email, so nothing
@@ -195,6 +231,9 @@ def abort_threshold_mb(limit_mb: int) -> int:
 
 def tripwire(mem: dict, abort: dict):
     # A background thread cannot raise into the task, so it only flips the flag; every heartbeat re-reads it.
+    # Known gap: both observed kills froze at 45%, i.e. inside model.transcribe()'s pre-yield work (whole-file
+    # decode + mel), where no heartbeat happens - so this wire guards the yielding stretches only, and the
+    # disk sample above is what reports the other kind.
     if abort is None or abort.get("used_mb"):
         return
     used = used_memory_mb(mem)
@@ -217,9 +256,11 @@ def record_peak(peak: dict, mem: dict):
 
 @celery_app.task(bind=True)
 def process_video_task(self, video_path: str, original_filename: str):   #self: each instance of a task
+    global PERSIST_SAMPLES
     video_path = os.path.abspath(video_path)
     base_name, _ = os.path.splitext(video_path)
     audio_path = f"{base_name}_temp.wav"
+    PERSIST_SAMPLES = True
     
     try:
         # Sampled before the heavy import so the cost of importing faster_whisper/numpy is measurable:
@@ -377,6 +418,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         raise e
 
     finally:
+        PERSIST_SAMPLES = False
         try:
             from video_processing import unload_whisper_model
             unload_whisper_model()
