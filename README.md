@@ -1,4 +1,4 @@
-# ⚡ DocAI & Video Intelligence Engine — Distributed Asynchronous RAG Pipeline
+# ⚡ DocAI & Video Intelligence Engine — Asynchronous RAG Pipeline
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
 [![Celery](https://img.shields.io/badge/Celery-37814A?style=for-the-badge&logo=celery&logoColor=white)](https://docs.celeryq.dev/)
@@ -8,42 +8,46 @@
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-FF6600?style=for-the-badge)](https://www.trychroma.com/)
 [![Whisper](https://img.shields.io/badge/OpenAI%20Whisper-000000?style=for-the-badge&logo=openai&logoColor=white)](https://github.com/openai/whisper)
 
-A **Multimodal Retrieval-Augmented Generation (RAG) Engine** built to run entirely on free-tier infrastructure, capable of processing large PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`) — **up to 3:30 on Render Free, with every limit measured rather than assumed; see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)**. Features an asynchronous event-driven worker queue (**Redis + Celery**), **FFmpeg** audio extraction, **INT8 quantized Whisper** speech-to-text transcription, **ChromaDB** vector storage, and **Gemini** temporal citation Q&A (`[MM:SS]`).
+A **Multimodal Retrieval-Augmented Generation (RAG) Engine** built to run entirely on free-tier infrastructure, capable of processing PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`) — **up to 3:30 on Render Free, with every limit measured rather than assumed; see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)**. 
+
+Features an asynchronous event-driven worker queue (**Redis + Celery**), **FFmpeg** audio extraction, **INT8 quantized faster-whisper** transcription, **Google Gemini 768-dim embeddings**, persistent **ChromaDB** vector storage, and **Gemini Flash** temporal citation Q&A (`[MM:SS]`).
 
 ---
 
 ## 🌟 Key Architectural & Engineering Highlights
 
-### 1. 🚀 Asynchronous Distributed Video Processing (Producer-Consumer Pattern)
+### 1. 🚀 Asynchronous Video Processing (Producer-Consumer Pattern)
 Heavy video processing runs outside the request path so the API stays responsive while a job is queued:
 - **FastAPI Gateway (Producer)**: Accepts video uploads via chunked streaming (`shutil.copyfileobj`), writes to shared storage, and enqueues a lightweight JSON ticket to Redis in **$<200\text{ms}$**.
 - **Redis Message Broker**: Manages queued jobs and stores task state metadata.
-- **Celery Worker Pool (Consumer)**: Isolated background worker process that consumes tickets, executes FFmpeg audio extraction, and runs Whisper transcription without blocking web traffic.
+- **Celery Worker Pool (Consumer)**: Isolated background worker process that consumes tickets, executes FFmpeg audio extraction, runs Whisper transcription, and handles vector indexing.
 
-The isolation is by *process*, not by machine: `start.sh` runs the gateway and the worker inside one container, so they still share a single memory budget — which is what actually bounds video length (see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)).
+The isolation is by *process*, not by machine: `start.sh` runs the gateway and the worker inside one container, so they still share a single memory budget — which is what actually bounds video length (see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)). "Microservice" in this deployed demo means decoupled processes and queues, not separate physical host instances.
 
 ### 2. 🎧 16kHz Mono Audio Extraction via FFmpeg Subprocess
 Invokes an uncompressed PCM 16-bit WAV conversion (`-ar 16000 -ac 1 -vn`) via Python `subprocess`. Converting stereo/48kHz audio to 16kHz mono cuts raw audio data size by **50%** and eliminates CPU decoding overhead for the AI model.
 
 ### 3. 🧠 INT8 Quantized Local Speech Recognition (`faster-whisper`)
 Utilizes `faster-whisper` on CTranslate2 CPU engine with **INT8 quantization**:
-- INT8 was picked for the memory envelope, not from a benchmark: this container has 512 MB shared with the API. Measured here — loading `tiny.en` costs **~130-150 MB** of non-reclaimable memory, and a 3:47 clip peaks at **356 MB**. The widely quoted ~70% RAM / 4x speed figures versus vanilla PyTorch Whisper were **never measured on this stack** and are not claimed as results.
-- Auto-detect is wired up (`language=None`), but the shipped checkpoint is **`tiny.en`, an English-only model** — "99 languages" belongs to the multilingual checkpoints. Non-English audio needs a different `WHISPER_MODEL_SIZE`, and setting `WHISPER_LANGUAGE` skips the detection pass entirely.
+- English-only by default (`tiny.en` checkpoint); non-English audio is not supported unless `WHISPER_MODEL_SIZE` is overridden with a multilingual checkpoint.
+- Published benchmarks report ~70% lower RAM and ~4x faster inference than vanilla PyTorch Whisper (unmeasured in this specific container; our measured baseline is ~130–150 MB to load `tiny.en` and a 356 MB container peak at 3:47).
 - Generates precise segment-level timestamps (`[01:15 - 01:45]`).
+- Voice Activity Detection (VAD) filter is explicitly disabled (`vad_filter=False`) in code to avoid loading Silero's ~80 MB ONNX runtime into the memory-constrained container.
 
-### 4. ⏱️ Temporal Citation Prompt Engineering
+### 4. ☁️ Zero-RAM Cloud Vector Embeddings
+Local embedding models (`all-MiniLM-L6-v2`) were completely replaced with **Google Gemini Embeddings (`gemini-embedding-001`, 768 dimensions)**. This eliminated ONNX Runtime and local neural net weights from the container, freeing ~160 MB of memory for Whisper inference.
+
+### 5. ⏱️ Temporal Citation Prompt Engineering
 Video transcript segments are indexed into ChromaDB with explicit inline timestamp markers. Gemini is governed by strict citation rules:
 > *"At [04:12 - 04:35], the speaker explains B-Trees..."*
 Allows users to scrub directly to the exact moment in the video.
 
-### 5. 🐳 Container Topology (Docker Compose)
-Locally this is 3 containers over a private internal bridge network:
+### 6. 🐳 Container Topology (Docker Compose)
+Orchestrates 3 isolated services locally over a private internal bridge network:
 1. `rag_api_backend`: FastAPI Gateway
 2. `rag_redis`: Redis 7 Broker
-3. `rag_celery_worker`: Celery Worker with pre-cached Whisper & Chroma models
+3. `rag_celery_worker`: Celery Worker with pre-cached Whisper models
 Uses volume mounts (`./storage`, `./chroma_db`) for shared host disk access.
-
-On Render Free the same image runs **one** container whose `start.sh` starts the gateway and the worker as two processes, because the tier has no free worker instance — so they share one 512 MB cgroup, which is the constraint the whole [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work) section is about. "Microservice" here means decoupled *processes and queues*, not separately scheduled machines.
 
 ---
 
@@ -51,19 +55,19 @@ On Render Free the same image runs **one** container whose `start.sh` starts the
 
 ```mermaid
 graph TD
-    Client([User / Postman / Frontend]) -->|POST /upload-video| API[FastAPI Gateway]
+    Client([User / Web UI / Postman]) -->|POST /upload-video| API[FastAPI Gateway]
     API -->|1. Stream File| Disk[(Shared Storage: /storage/videos)]
-    API -->|2. Enqueue Ticket| Redis[(Redis Broker & Result Backend)]
+    API -->|2. Enqueue Ticket| Redis[(Upstash Redis Broker)]
     API -->|3. Return task_id < 200ms| Client
     
     Redis -->|4. Pull Job| Worker[Celery Background Worker]
     Worker -->|5. Extract 16kHz Mono WAV| FFmpeg[FFmpeg Subprocess]
     FFmpeg --> Audio[Raw PCM WAV File]
-    Audio --> Whisper[faster-whisper INT8 CPU Engine]
+    Audio --> Whisper[faster-whisper INT8 CPU Engine: tiny.en]
     
     Whisper -->|6. Timestamped Segments| Chunker[Timestamp Chunk Formatter]
-    Chunker --> Embedder[Google Gemini Embeddings: gemini-embedding-001]
-    Embedder --> Chroma[(ChromaDB Persistent Vector Store)]
+    Chunker --> Embedder[Google Gemini API: gemini-embedding-001]
+    Embedder --> Chroma[(ChromaDB docai_v2 Persistent Store)]
     
     Client -->|GET /tasks/task_id| API
     API -->|Poll Status: 15% -> 40% -> 100%| Redis
@@ -81,14 +85,14 @@ graph TD
 | Component | Technology | Purpose |
 | :--- | :--- | :--- |
 | **API Gateway** | **FastAPI** | High-performance asynchronous REST routing & streaming |
-| **Task Queue & Broker** | **Redis** | In-memory message broker & task state store |
+| **Task Queue & Broker** | **Redis** | Cloud message broker (Upstash) with SSL certificate validation |
 | **Distributed Worker** | **Celery** | Isolated background process execution |
-| **Media Processing** | **FFmpeg** | Binary subprocess audio extraction (16kHz mono WAV) |
-| **Speech Recognition** | **faster-whisper** | INT8 CTranslate2 CPU model for timestamped transcription |
-| **Vector Database** | **ChromaDB** | Local persistent dense vector database |
-| **Embedding Model** | **Google Gemini** | Cloud-based `gemini-embedding-001` (768 dimensions), called from `embeddings.py` |
-| **LLM Inference** | **Google GenAI SDK** | Resilient Gemini Flash-Lite citation engine |
-| **Containerization** | **Docker & Docker Compose** | 3 services locally; Render Free runs gateway + worker as 2 processes in 1 container |
+| **Media Processing** | **FFmpeg / ffprobe** | Binary subprocess audio extraction (16kHz mono WAV) |
+| **Speech Recognition** | **faster-whisper** | INT8 CTranslate2 CPU model (`tiny.en`, single thread) |
+| **Vector Database** | **ChromaDB** | Local persistent dense vector database (`docai_v2`) |
+| **Embedding Engine** | **Google Gemini API** | Cloud-based `gemini-embedding-001` (768-dimensional) |
+| **LLM Inference** | **Google GenAI SDK** | Resilient Gemini Flash citation engine |
+| **Containerization** | **Docker & Docker Compose** | Multi-process container deployment via `start.sh` |
 
 ---
 
@@ -110,14 +114,18 @@ Streams video file to storage and enqueues background processing.
 ```
 
 #### `GET /tasks/{task_id}`
-Polls Celery background worker progress.
+Polls Celery background worker progress and container memory.
 - **Response**:
 ```json
 {
   "task_id": "39ca2ffe-f378-427a-8593-d8f986697780",
   "state": "PROCESSING",
-  "progress": 40,
-  "step": "Transcribing audio with Whisper"
+  "progress": 45,
+  "step": "Transcribing audio with Whisper",
+  "container_memory": {
+    "container_anon_mb": 284,
+    "limit_mb": 512
+  }
 }
 ```
 
@@ -146,7 +154,7 @@ Queries indexed document and video knowledge base.
 
 ---
 
-## 🚀 Quickstart (Single Command)
+## 🚀 Quickstart (Docker Compose)
 
 ### Prerequisites
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed & running.
@@ -154,7 +162,7 @@ Queries indexed document and video knowledge base.
 
 ### 1. Clone & Configure
 ```bash
-git clone https://github.com/YOUR_USERNAME/distributed-video-rag-engine.git
+git clone https://github.com/farzeen-code/distributed-video-rag-engine.git
 cd distributed-video-rag-engine
 
 # Create .env file
@@ -186,7 +194,7 @@ Every figure below is the container's cgroup reading (`memory.stat` `anon` again
 
 **Duration is a proxy for memory, not a predictor.** The same 3:47 clip peaked 52 MB apart across two runs, and `tmpfs` is not the explanation (`container_shmem_mb` reads 0 — the gap between the container total and `anon` is reclaimable page cache). What moves the baseline is what the gateway is already holding when the worker starts: a container that has just served ChromaDB queries has less room than a freshly woken one. Three different formulas were fitted to these peaks during development and all three were falsified by the next upload, so the enforced ceiling is an **empirical clamp, not an extrapolation**.
 
-So the cap is deliberately below the longest verified run. `MAX_VERIFIED_VIDEO_SECONDS=210` (3:30) sits one notch under the 3:47 that works twice, because a visitor's crash costs more than the last twenty seconds of a clip.
+So the cap is deliberately below the longest verified run. `MAX_VERIFIED_VIDEO_SECONDS=210` (3:30) sits one notch under the 3:47 that worked twice, because a visitor's crash costs more than the last twenty seconds of a clip.
 
 What enforces it, cheapest failure first:
 
@@ -195,7 +203,7 @@ What enforces it, cheapest failure first:
 3. **Mid-decode**, a tripwire aborts the task at 440 MB of 512 MB as a readable error instead of waiting for the kernel's SIGKILL — which used to mean a Render OOM email and a progress bar frozen at 45% forever.
 4. **After a kill**, the gateway notices that the task's last heartbeat predates its own boot, and reports *"Killed mid-task at 45%: the worker's last reading before the restart was XMB"*. That last reading is written to Redis while the task runs, because Render wipes an instance's local files on restart.
 
-Known gap: step 3 cannot fire inside `model.transcribe()`'s pre-yield work, where no heartbeat runs, which is where both observed kills happened. Step 4 exists because step 3 can't reach it.
+**Known gap:** Step 3 cannot fire inside `model.transcribe()`'s pre-yield work, where no heartbeat runs, which is where both observed kills happened. Step 4 exists because step 3 can't reach it.
 
 `GET /` exposes the whole breakdown (`api_memory`: `container_anon_mb`, `container_shmem_mb`, `cgroup_gap_mb`, `limit_mb`) and the upload progress line shows the live figure, so this is all measurable without shell access or log filtering.
 
