@@ -22,7 +22,6 @@ from tasks import (
     read_memory,
     affordable_video_seconds,
     abort_threshold_mb,
-    last_mem_sample,
     MAX_VERIFIED_VIDEO_SECONDS,
     WHISPER_ADVERTISE_MARGIN_MB,
 )
@@ -49,7 +48,7 @@ app = FastAPI(title="RAG Document Q&A", lifespan=lifespan)
 
 @app.get("/")
 def health_check():
-    configured = int(os.environ.get("MAX_VIDEO_SECONDS", "180"))
+    configured = int(os.environ.get("MAX_VIDEO_SECONDS", "150"))
     # Never advertise above what has actually completed here, however much headroom this reading shows.
     verified = MAX_VERIFIED_VIDEO_SECONDS
     affordable = affordable_video_seconds(margin_mb=WHISPER_ADVERTISE_MARGIN_MB)
@@ -178,21 +177,22 @@ def get_task_status(task_id: str):
         # worker that no longer exists. That run was killed, not slow, and it will never advance again.
         response["task_stale"] = bool(updated_at and updated_at < CONTAINER_BOOT_TS)
         if response["task_stale"]:
-            response["step"] = response["message"] = (
-                f"Killed mid-task at {meta.get('progress', 0)}% ({meta.get('step')}): the container restarted, "
-                "so no worker owns this job anymore. Try a shorter clip."
-            )
-            last = last_mem_sample()
-            # The worker writes each sample to disk while a task runs, because the run that gets OOM-killed is
-            # the only one that cannot report its own peak. This is the number that says whether the ceiling
+            # Every heartbeat carries its own memory reading, so the ghost's last write is by construction its
+            # last measurement - no side channel to go wrong. This is the number that says whether the ceiling
             # moves with clip length or only with what the gateway happened to be holding.
-            if last.get("hard_mb") and updated_at and last.get("recorded_at", 0) >= updated_at - 5:
-                response["last_sample"] = last
+            dead = meta.get("mem") or {}
+            used = dead.get("hard_mb") or dead.get("anon_mb")
+            if used:
+                response["last_sample"] = dead
                 response["step"] = response["message"] = (
-                    f"Killed mid-task at {meta.get('progress', 0)}%: the worker's last reading before the "
-                    f"restart was {last['hard_mb']}MB of {last.get('limit_mb', '?')}MB "
-                    f"({last.get('anon_mb', 0)}MB heap + {last.get('shmem_mb', 0)}MB tmpfs) during "
-                    f"'{last.get('stage', 'decoding')}'. Try a shorter clip."
+                    f"Killed mid-task at {meta.get('progress', 0)}% ({meta.get('step')}): the worker's last "
+                    f"reading before the restart was {used}MB of {dead.get('limit_mb', '?')}MB "
+                    f"({dead.get('anon_mb', 0)}MB heap + {dead.get('shmem_mb', 0)}MB tmpfs). Try a shorter clip."
+                )
+            else:
+                response["step"] = response["message"] = (
+                    f"Killed mid-task at {meta.get('progress', 0)}% ({meta.get('step')}): the container restarted, "
+                    "so no worker owns this job anymore. Try a shorter clip."
                 )
         
     elif task_result.state == "SUCCESS":

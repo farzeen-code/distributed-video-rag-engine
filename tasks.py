@@ -1,6 +1,5 @@
 import os
 import gc
-import json
 import time
 import threading
 from celery import Celery
@@ -126,60 +125,21 @@ def used_memory_mb(mem: dict) -> int:
     # Falls back to anon on a cgroup v1 host, where the split is not reported.
     return mem.get("container_hard_mb") or mem["container_anon_mb"]
 
-# Set only by the Celery worker while a task is running. An OOM kill takes the process, its stdout and its
-# Redis heartbeat with it, so the only way to learn where a clip actually died is to leave each sample
-# somewhere the *next* container can read - the killed run cannot report its own peak.
-PERSIST_SAMPLES = False
-MEMORY_SAMPLE_KEY = "docai:last_mem_sample"
-MEM_SAMPLE_THROTTLE_SEC = 5
-
-# Render wipes an instance's local files on restart, not only on redeploy, so the sample cannot live on the
-# ephemeral disk. Redis is off-box, already a dependency, and survives exactly the event being measured.
-_sample_redis = None
-_sample_written_at = 0.0
-
-def _sample_client():
-    global _sample_redis
-    if _sample_redis is None:
-        import redis as redis_lib
-        kwargs = {"decode_responses": True, "socket_timeout": 2, "socket_connect_timeout": 2}
-        if REDIS_URL.startswith("rediss://"):
-            kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
-        _sample_redis = redis_lib.Redis.from_url(RESULT_BACKEND, **kwargs)
-    return _sample_redis
-
-def remember_sample(stage: str, mem: dict):
-    global _sample_written_at
-    # Throttled: this runs on every Whisper segment too, and Upstash is a network round trip away.
-    if time.time() - _sample_written_at < MEM_SAMPLE_THROTTLE_SEC:
-        return
-    try:
-        _sample_client().setex(
-            MEMORY_SAMPLE_KEY,
-            86400,
-            json.dumps(
-                {
-                    "stage": stage,
-                    "recorded_at": time.time(),
-                    "anon_mb": mem["container_anon_mb"],
-                    "shmem_mb": mem["container_shmem_mb"],
-                    "hard_mb": used_memory_mb(mem),
-                    "container_mb": mem["container_mb"],
-                    "limit_mb": mem["limit_mb"],
-                }
-            ),
-        )
-        _sample_written_at = time.time()
-    except Exception:
-        pass
-
-def last_mem_sample() -> dict:
-    try:
-        raw = _sample_client().get(MEMORY_SAMPLE_KEY)
-        data = json.loads(raw) if raw else {}
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+# Telemetry design note, learned the hard way: the last memory reading of a killed run cannot be smuggled
+# out through a side channel. A file on Render's disk dies with the restart, and a separate Redis client
+# failed silently twice - both attempts reported nothing for the exact runs they existed to measure. The
+# task heartbeat itself is the only write that is known to survive: it is the mechanism that delivered the
+# frozen "45%" string, over Celery's own already-working connection. So every heartbeat now carries its own
+# memory reading, and a ghost's last heartbeat is by construction its last measurement.
+def memory_snapshot(mem: dict) -> dict:
+    return {
+        "stage_ts": time.time(),
+        "anon_mb": mem["container_anon_mb"],
+        "shmem_mb": mem["container_shmem_mb"],
+        "hard_mb": used_memory_mb(mem),
+        "container_mb": mem["container_mb"],
+        "limit_mb": mem["limit_mb"],
+    }
 
 def log_memory(stage: str):
     mem = read_memory()
@@ -189,25 +149,20 @@ def log_memory(stage: str):
         f"shmem={mem['container_shmem_mb']}MB hard={used_memory_mb(mem)}MB limit={mem['limit_mb']}MB",
         flush=True,
     )
-    if PERSIST_SAMPLES:
-        remember_sample(stage, mem)
     return mem
 
-# Two formulas have now been fitted to three noisy peaks and falsified by a Render OOM email, so nothing
-# here extrapolates. These are the observed endpoints: a 3:47 clip finished at 304MB of anon, a 5:40 clip
-# was read at 463MB twenty-one seconds into decoding and then the container restarted (159MB is the fresh
-# boot baseline). Cost is flat-ish up to ~4 minutes and climbs steeply after it, which is a shape this
-# linear model cannot represent - so the verified ceiling below is what refuses uploads, not the fit.
 WHISPER_LOAD_COST_MB = int(os.environ.get("WHISPER_LOAD_COST_MB", "150"))
 WHISPER_DECODE_MB_PER_MINUTE = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "5"))
 
-# Hard clamp on both what GET / advertises and what the worker's guard allows, so raising MAX_VIDEO_SECONDS
-# in the dashboard cannot route an upload into a container kill. 3:47 is the longest verified run (304MB and
-# 356MB peaks, both on a freshly woken container), but continuous use is not a fresh container: /query loads
-# ChromaDB's sqlite and HNSW index and never gives it back (+32MB of anon, 163 -> 195, malloc_trim returns
-# nothing), and the same clip varies ~52MB between runs. Warm baseline + variance is what pushes this below
-# the verified length rather than at it. 3:00 under that arithmetic is derived, not yet measured.
-MAX_VERIFIED_VIDEO_SECONDS = int(os.environ.get("MAX_VERIFIED_VIDEO_SECONDS", "180"))
+# Three formulas have now been fitted to noisy peaks and falsified by a Render OOM email, so this does NOT
+# extrapolate. Observed peaks: 2:20 -> 324MB, 3:47 -> 304MB and 356MB (twice), 2:57 -> 388MB. Killed: 2:54,
+# 4:18, 5:40. Duration does not order these - a 3:47 finished twice while a 2:54 died, and a clip 50s shorter
+# than 3:47 peaked 32MB higher - so the driver is something this project has not identified, and no length is
+# safe in the measured sense. The number below is a judgment call, not a computation: it trades the worst
+# continuous-use experience for a shorter upload limit, and the tripwire plus the heartbeat-carried memory
+# reading are what actually report the edge. Lowering this is the only free-tier knob that changes the odds;
+# raising it back is one dashboard variable.
+MAX_VERIFIED_VIDEO_SECONDS = int(os.environ.get("MAX_VERIFIED_VIDEO_SECONDS", "150"))
 
 # Self-imposed tripwire. Render's SIGKILL takes the worker, the queued task and the API with it, and leaves
 # a ghost frozen at the last heartbeat plus an email. Aborting one notch below the limit turns the same
@@ -223,8 +178,8 @@ WHISPER_ADVERTISE_MARGIN_MB = int(os.environ.get("WHISPER_ADVERTISE_MARGIN_MB", 
 
 def affordable_video_seconds(mem: dict = None, margin_mb: int = 0) -> int:
     """
-    Length of audio that fits alongside whatever this container is already holding, clamped to the longest
-    run ever completed here. The headroom term may lower it on a warm gateway; it can never raise the
+    Length of audio that fits alongside whatever this container is already holding, clamped to the cap chosen
+    for this deployment. The headroom term may lower it on a warm gateway; it can never raise the
     ceiling above MAX_VERIFIED_VIDEO_SECONDS. Returns 0 when there is no cgroup data to reason about.
     """
     mem = mem or read_memory()
@@ -256,9 +211,9 @@ def abort_threshold_mb(limit_mb: int) -> int:
 
 def tripwire(mem: dict, abort: dict):
     # A background thread cannot raise into the task, so it only flips the flag; every heartbeat re-reads it.
-    # Known gap: both observed kills froze at 45%, i.e. inside model.transcribe()'s pre-yield work (whole-file
-    # decode + mel), where no heartbeat happens - so this wire guards the yielding stretches only, and the
-    # disk sample above is what reports the other kind.
+    # Known gap: both observed kills froze during model.transcribe()'s pre-yield work (whole-file decode + mel),
+    # where the task thread never returns to re-read the flag - so this wire guards the yielding stretches only.
+    # The watcher keeps sampling through the gap, which is why the peak is still the container's, not a guess.
     if abort is None or abort.get("used_mb"):
         return
     used = used_memory_mb(mem)
@@ -281,12 +236,9 @@ def record_peak(peak: dict, mem: dict):
 
 @celery_app.task(bind=True)
 def process_video_task(self, video_path: str, original_filename: str):   #self: each instance of a task
-    global PERSIST_SAMPLES
     video_path = os.path.abspath(video_path)
     base_name, _ = os.path.splitext(video_path)
     audio_path = f"{base_name}_temp.wav"
-    PERSIST_SAMPLES = True
-    
     try:
         # Sampled before the heavy import so the cost of importing faster_whisper/numpy is measurable:
         # this is roughly what GET / saw when it advertised the cap.
@@ -306,16 +258,24 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         # the task, so every heartbeat re-reads it and unwinds from here instead.
         abort = {}
 
-        def report(progress: int, step: str):
+        def report(progress: int, step: str, mem: dict = None):
             if abort.get("used_mb"):
                 raise ValueError(
                     f"Stopped deliberately at {abort['used_mb']}MB of {abort['limit_mb']}MB "
                     f"({abort['anon_mb']}MB heap + {abort['shmem_mb']}MB tmpfs), just short of the point where "
-                    "Render kills the container. This clip is longer than the free tier can transcribe "
-                    f"({MAX_VERIFIED_VIDEO_SECONDS / 60:.1f} min is the longest run completed here). "
-                    "Upload a shorter clip."
+                    "Render kills the container. This clip is longer than the cap on this deployment "
+                    f"({MAX_VERIFIED_VIDEO_SECONDS / 60:.1f} min). Upload a shorter clip."
                 )
-            self.update_state(state="PROCESSING", meta={"step": step, "progress": progress, "updated_at": time.time()})
+            mem = mem or read_memory()
+            self.update_state(
+                state="PROCESSING",
+                meta={
+                    "step": step,
+                    "progress": progress,
+                    "updated_at": time.time(),
+                    "mem": memory_snapshot(mem),
+                },
+            )
 
         report(38, "Extracting audio with FFmpeg")
         print(f"[{self.request.id}] Extracting audio from {video_path}", flush=True)
@@ -332,7 +292,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         audio_seconds = get_audio_duration(audio_path)
         # Clamped by the verified ceiling so raising MAX_VIDEO_SECONDS in the dashboard refuses uploads in
         # the worker instead of routing them into a container kill.
-        max_seconds = min(int(os.environ.get("MAX_VIDEO_SECONDS", "180")), MAX_VERIFIED_VIDEO_SECONDS)
+        max_seconds = min(int(os.environ.get("MAX_VIDEO_SECONDS", "150")), MAX_VERIFIED_VIDEO_SECONDS)
         if audio_seconds > max_seconds:
             cap = f"{max_seconds / 60:.1f} minutes" if max_seconds >= 60 else f"{max_seconds} seconds"
             raise ValueError(
@@ -351,7 +311,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             mem = log_memory(f"transcribing {pct}%")
             record_peak(peak_seen, mem)
             tripwire(mem, abort)
-            report(pct, msg)
+            report(pct, msg, mem)
 
         # Refuse before the load instead of letting Render SIGKILL the container mid-decode.
         at_guard = read_memory()
@@ -361,16 +321,24 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             raise ValueError(
                 f"This clip is {audio_seconds / 60:.1f} min and {affordable / 60:.1f} min is the most this "
                 f"{at_guard['limit_mb']}MB container can take right now. That is either the memory the gateway "
-                "is still holding from recent queries, or the ceiling of the longest run completed on this "
-                f"deployment ({MAX_VERIFIED_VIDEO_SECONDS / 60:.1f} min). Upload a shorter clip - the gateway "
+                "is still holding from recent queries, or the cap chosen for this deployment "
+                f"({MAX_VERIFIED_VIDEO_SECONDS / 60:.1f} min). Upload a shorter clip - the gateway "
                 "gives its memory back when the service restarts, not between requests."
             )
 
         # Load the weights here so the sample lands after they are resident; transcribe reuses the cached instance.
         get_whisper_model()
-        record_peak(peak_seen, log_memory("after model load"))
+        at_load = log_memory("after model load")
+        record_peak(peak_seen, at_load)
+        # The one decomposition never measured: what the weights cost versus what decoding costs afterwards.
+        # Without it, "raise the cap" and "lower the cap" are both guesses, so the completion line reports both.
+        peak_seen["model_load_mb"] = max(0, used_memory_mb(at_load) - used_memory_mb(at_guard))
 
         stop_watching = start_memory_watcher(peak=peak_seen, abort=abort)
+        # model.transcribe() decodes the whole file before it yields its first segment, so no heartbeat fires
+        # during that stretch - and both observed container kills happened inside it. This is therefore the
+        # last memory reading a ghost run can carry, which makes it the most valuable write in the task.
+        report(44, f"Whisper resident at {used_memory_mb(at_load)}MB of {at_load['limit_mb']}MB, decoding audio")
         try:
             segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress, progress_start=45, progress_end=75)
         finally:
@@ -416,7 +384,8 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
             completion_message += (
                 f" (container peaked at {peak_seen['container_anon_mb']}MB anon / "
                 f"{peak_seen.get('container_hard_mb', peak_seen['container_anon_mb'])}MB incl. tmpfs "
-                f"of {peak_seen['limit_mb']}MB, worker pre-load {peak_seen.get('preload_cost_mb', 0)}MB)"
+                f"of {peak_seen['limit_mb']}MB; weights {peak_seen.get('model_load_mb', 0)}MB on top of "
+                f"{peak_seen.get('preload_cost_mb', 0)}MB pre-load)"
             )
         if coverage_pct and coverage_pct < 80:
             completion_message += f" - warning: only {coverage_pct}% of the audio was transcribed"
@@ -443,7 +412,6 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         raise e
 
     finally:
-        PERSIST_SAMPLES = False
         try:
             from video_processing import unload_whisper_model
             unload_whisper_model()

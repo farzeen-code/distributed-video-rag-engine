@@ -16,11 +16,13 @@ services:
       - key: WHISPER_CPU_THREADS
         value: "1"
       - key: MAX_VIDEO_SECONDS
-        value: "180"
+        value: "150"
       # Hard clamp on both the advertised cap and the worker's guard. Raising MAX_VIDEO_SECONDS above this
-      # no longer lets a clip through: it is the longest run this container has actually completed.
+      # no longer lets a clip through. This is deliberately below the longest run ever completed here (3:47,
+      # twice) because a 2:54 clip killed a container that had just finished a 2:57 - length does not
+      # predict the peak, so this is a risk choice, and lowering it is the only free-tier knob that helps.
       - key: MAX_VERIFIED_VIDEO_SECONDS
-        value: "180"
+        value: "150"
       - key: WHISPER_ABORT_ANON_MB
         value: "440"
       - key: WHISPER_LOAD_COST_MB

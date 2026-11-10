@@ -8,7 +8,7 @@
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-FF6600?style=for-the-badge)](https://www.trychroma.com/)
 [![Whisper](https://img.shields.io/badge/OpenAI%20Whisper-000000?style=for-the-badge&logo=openai&logoColor=white)](https://github.com/openai/whisper)
 
-A **Multimodal Retrieval-Augmented Generation (RAG) Engine** built to run entirely on free-tier infrastructure, capable of processing PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`) — **up to 3:30 on Render Free, with every limit measured rather than assumed; see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)**. 
+A **Multimodal Retrieval-Augmented Generation (RAG) Engine** built to run entirely on free-tier infrastructure, capable of processing PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`) — **capped at 2:30 on Render Free, with every limit measured rather than assumed; see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)**. 
 
 Features an asynchronous event-driven worker queue (**Redis + Celery**), **FFmpeg** audio extraction, **INT8 quantized faster-whisper** transcription, **Google Gemini 768-dim embeddings**, persistent **ChromaDB** vector storage, and **Gemini Flash** temporal citation Q&A (`[MM:SS]`).
 
@@ -30,7 +30,7 @@ Invokes an uncompressed PCM 16-bit WAV conversion (`-ar 16000 -ac 1 -vn`) via Py
 ### 3. 🧠 INT8 Quantized Local Speech Recognition (`faster-whisper`)
 Utilizes `faster-whisper` on CTranslate2 CPU engine with **INT8 quantization**:
 - English-only by default (`tiny.en` checkpoint); non-English audio is not supported unless `WHISPER_MODEL_SIZE` is overridden with a multilingual checkpoint.
-- Published benchmarks report ~70% lower RAM and ~4x faster inference than vanilla PyTorch Whisper (unmeasured in this specific container; our measured baseline is ~130–150 MB to load `tiny.en` and a 356 MB container peak at 3:47).
+- Published benchmarks report ~70% lower RAM and ~4x faster inference than vanilla PyTorch Whisper (unmeasured in this specific container; what *is* measured here is the container peak per upload — 304–388 MB on the runs that finished — reported by the app itself, with the model-load cost now broken out separately).
 - Generates precise segment-level timestamps (`[01:15 - 01:45]`).
 - Voice Activity Detection (VAD) filter is explicitly disabled (`vad_filter=False`) in code to avoid loading Silero's ~80 MB ONNX runtime into the memory-constrained container.
 
@@ -187,23 +187,28 @@ Every figure below is the container's cgroup reading (`memory.stat` `anon` again
 | Clip | Outcome on Render Free | Peak container memory |
 | --- | --- | --- |
 | 2:20 | indexed | 324 MB |
-| 3:47 | indexed, twice | 304 MB and 356 MB |
-| 4:18 | **killed mid-decode** | the kernel got it before the guard did |
+| 2:54 | **killed mid-decode** | kernel got it before the guard did |
+| 2:57 | indexed | 388 MB |
+| 3:47 | indexed, **twice** | 304 MB and 356 MB |
+| 4:18 | **killed mid-decode** | kernel got it before the guard did |
 | 5:25 | refused before upload | — |
 | 5:40 | killed mid-decode, twice | 463 MB observed 21s into decoding, then a restart |
 
-**Duration is a proxy for memory, not a predictor.** The same 3:47 clip peaked 52 MB apart across two runs, and `tmpfs` is not the explanation (`container_shmem_mb` reads 0 — the gap between the container total and `anon` is reclaimable page cache). What moves the baseline is what the gateway is already holding when the worker starts: a container that has just served ChromaDB queries has less room than a freshly woken one. Three different formulas were fitted to these peaks during development and all three were falsified by the next upload, so the enforced ceiling is an **empirical clamp, not an extrapolation**.
+**Read that table vertically, not top to bottom: clip length does not predict the outcome.** A 2:54 upload killed a container that had just finished a 2:57, and 3:47 completed twice while sitting *below* both a 2:54 and a 4:18 in length ordering. `tmpfs` is not the explanation (`container_shmem_mb` reads 0 — the gap between the container total and `anon` is reclaimable page cache), and neither is the decoded audio, which is only ~11 MB for a 3-minute clip. The strongest signal is what the gateway was already holding when the worker started — a container that just served ChromaDB queries has less room than a freshly woken one — plus a run-to-run spread of ~50 MB on the *same* clip.
 
-So the cap is deliberately below the longest verified run. `MAX_VERIFIED_VIDEO_SECONDS=210` (3:30) sits one notch under the 3:47 that worked twice, because a visitor's crash costs more than the last twenty seconds of a clip.
+**What drives the peak is still unidentified.** Three formulas were fitted to these numbers during development and all three were falsified by the next upload, so nothing below extrapolates. Treat every length in this README as a measured data point, not a boundary.
+
+The enforced cap is therefore a **risk choice, not a verified safe length**. `MAX_VERIFIED_VIDEO_SECONDS=150` (2:30) sits below the shortest run that has ever died. That is not the same as "safe": 2:57 peaked at 388 MB of 512 MB, so ~124 MB of headroom has already proven insufficient once. The cap exists to make the bad case rarer and the failure legible, and lowering it further is the only free-tier knob that changes the odds.
 
 What enforces it, cheapest failure first:
 
 1. **In the browser**, before the file leaves disk: the frontend reads `worker.max_video_seconds` from `GET /` and refuses over-length uploads outright.
 2. **In the worker**, after audio extraction: `MAX_VERIFIED_VIDEO_SECONDS` clamps the cap, and an affordability check refuses when the memory the gateway currently holds plus the Whisper load would exceed the container. Raising `MAX_VIDEO_SECONDS` in the dashboard cannot bypass either.
 3. **Mid-decode**, a tripwire aborts the task at 440 MB of 512 MB as a readable error instead of waiting for the kernel's SIGKILL — which used to mean a Render OOM email and a progress bar frozen at 45% forever.
-4. **After a kill**, the gateway notices that the task's last heartbeat predates its own boot, and reports *"Killed mid-task at 45%: the worker's last reading before the restart was XMB"*. That last reading is written to Redis while the task runs, because Render wipes an instance's local files on restart.
+4. **After a kill**, the gateway notices that the task's last heartbeat predates its own boot, and reports *"Killed mid-task at 44% (…): the worker's last reading before the restart was XMB of 512MB"*. The number travels inside the Celery heartbeat itself — an earlier version wrote it to a separate Redis key and to a local file, and both silently failed to report the exact runs they existed to measure.
 
-**Known gap:** Step 3 cannot fire inside `model.transcribe()`'s pre-yield work, where no heartbeat runs, which is where both observed kills happened. Step 4 exists because step 3 can't reach it.
+**Known gap:** Step 3 cannot fire inside `model.transcribe()`'s pre-yield work, where the task thread never returns to re-read the abort flag — which is where all three observed kills happened. A heartbeat is now emitted immediately before that call specifically so the death-adjacent memory reading survives; the load/decode split (`weights N MB on top of M MB pre-load`) ships in the completion line so the next few runs can say whether the growth is the model or the audio.
+
 
 `GET /` exposes the whole breakdown (`api_memory`: `container_anon_mb`, `container_shmem_mb`, `cgroup_gap_mb`, `limit_mb`) and the upload progress line shows the live figure, so this is all measurable without shell access or log filtering.
 
@@ -211,7 +216,7 @@ What enforces it, cheapest failure first:
 
 PDF and DOCX ingestion is unaffected — no FFmpeg, no Whisper, parsed in the request path.
 
-The ceiling is a single deployment variable, reported live: `GET /` returns `worker.max_video_seconds`, and the frontend reads it when the upload drawer opens, so changing `MAX_VERIFIED_VIDEO_SECONDS` in the Render dashboard takes effect without touching frontend code. Transcription speed is the other bound — `CELERY_TASK_SOFT_TIME_LIMIT` (default 1800s) fails a task cleanly long before it can spin forever, so raise both together. Beyond roughly 4 minutes on this tier, the honest answer is that free CPU and 512 MB cannot fit a full-text stack plus local Whisper inference in one container; the same image runs unchanged on a machine with a real CPU and 2 GB+ RAM (`docker compose up --build`), where the length limit stops being interesting — noting that `chroma_db/` is a local persistent store, so that is a different index, not the deployed one.
+The ceiling is a single deployment variable, reported live: `GET /` returns `worker.max_video_seconds`, and the frontend reads it when the upload drawer opens, so changing `MAX_VERIFIED_VIDEO_SECONDS` in the Render dashboard takes effect without touching frontend code. Transcription speed is the other bound — a 4-minute clip takes ~10 minutes of wall clock on 0.1 vCPU, and `CELERY_TASK_SOFT_TIME_LIMIT` (default 1800s) fails a task cleanly long before it can spin forever, so raise both together. The honest reading of the table above is that **this tier has no defensible length limit at all** — the shortest upload that has ever died was under 3 minutes — so the cap is a bet on variance rather than a boundary. What is *not* a bet: the same image runs unchanged on a machine with a real CPU and 2 GB+ RAM (`docker compose up --build`), where the length limit stops being interesting — noting that `chroma_db/` is a local persistent store, so that is a different index, not the deployed one.
 
 ---
 
