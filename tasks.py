@@ -201,12 +201,13 @@ def log_memory(stage: str):
 WHISPER_LOAD_COST_MB = int(os.environ.get("WHISPER_LOAD_COST_MB", "150"))
 WHISPER_DECODE_MB_PER_MINUTE = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "5"))
 
-# The longest length this deployment has actually been observed to complete. Acts as a hard clamp on both
-# what GET / advertises and what the worker's guard allows, so raising MAX_VIDEO_SECONDS in the dashboard
-# cannot route an upload into a container kill. 3:47 is verified twice (356MB and 304MB peaks); the clamp
-# sits 17s below it because run-to-run variance is ~50MB and a visitor's failure costs more than a clip's
-# last 20 seconds.
-MAX_VERIFIED_VIDEO_SECONDS = int(os.environ.get("MAX_VERIFIED_VIDEO_SECONDS", "210"))
+# Hard clamp on both what GET / advertises and what the worker's guard allows, so raising MAX_VIDEO_SECONDS
+# in the dashboard cannot route an upload into a container kill. 3:47 is the longest verified run (304MB and
+# 356MB peaks, both on a freshly woken container), but continuous use is not a fresh container: /query loads
+# ChromaDB's sqlite and HNSW index and never gives it back (+32MB of anon, 163 -> 195, malloc_trim returns
+# nothing), and the same clip varies ~52MB between runs. Warm baseline + variance is what pushes this below
+# the verified length rather than at it. 3:00 under that arithmetic is derived, not yet measured.
+MAX_VERIFIED_VIDEO_SECONDS = int(os.environ.get("MAX_VERIFIED_VIDEO_SECONDS", "180"))
 
 # Self-imposed tripwire. Render's SIGKILL takes the worker, the queued task and the API with it, and leaves
 # a ghost frozen at the last heartbeat plus an email. Aborting one notch below the limit turns the same
@@ -331,7 +332,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         audio_seconds = get_audio_duration(audio_path)
         # Clamped by the verified ceiling so raising MAX_VIDEO_SECONDS in the dashboard refuses uploads in
         # the worker instead of routing them into a container kill.
-        max_seconds = min(int(os.environ.get("MAX_VIDEO_SECONDS", "210")), MAX_VERIFIED_VIDEO_SECONDS)
+        max_seconds = min(int(os.environ.get("MAX_VIDEO_SECONDS", "180")), MAX_VERIFIED_VIDEO_SECONDS)
         if audio_seconds > max_seconds:
             cap = f"{max_seconds / 60:.1f} minutes" if max_seconds >= 60 else f"{max_seconds} seconds"
             raise ValueError(
