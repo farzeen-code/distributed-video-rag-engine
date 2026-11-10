@@ -25,10 +25,16 @@ services:
         value: "150"
       - key: WHISPER_ABORT_ANON_MB
         value: "440"
+      # Measured across get_whisper_model() by the upload completion line.
       - key: WHISPER_LOAD_COST_MB
-        value: "150"
+        value: "75"
       - key: WHISPER_DECODE_MB_PER_MINUTE
         value: "5"
+      # Lower bound from ONE observed kill: a run read at 344MB of 512MB was then SIGKILLed inside
+      # model.transcribe()'s pre-yield step, so that step needs more than the 168MB that was free.
+      # Tighten it from the next death's numbers; do not treat it as a distribution.
+      - key: WHISPER_PREYIELD_SPIKE_MB
+        value: "170"
       - key: WHISPER_ADVERTISE_MARGIN_MB
         value: "13"
       - key: CELERY_TASK_SOFT_TIME_LIMIT

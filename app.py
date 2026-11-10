@@ -22,6 +22,7 @@ from tasks import (
     read_memory,
     affordable_video_seconds,
     abort_threshold_mb,
+    WHISPER_PREYIELD_SPIKE_MB,
     MAX_VERIFIED_VIDEO_SECONDS,
     WHISPER_ADVERTISE_MARGIN_MB,
 )
@@ -64,6 +65,9 @@ def health_check():
             "configured_max_video_seconds": configured,
             "verified_max_video_seconds": verified,
             "abort_anon_mb": abort_threshold_mb(read_memory()["limit_mb"]),
+            # The floor of free memory a decode step may consume in one uninterruptible allocation; the worker
+            # refuses below it, which is the term that decides warm-container behaviour rather than this cap.
+            "preyield_spike_mb": WHISPER_PREYIELD_SPIKE_MB,
         },
         "api_memory": read_memory(),
     }
@@ -184,10 +188,13 @@ def get_task_status(task_id: str):
             used = dead.get("hard_mb") or dead.get("anon_mb")
             if used:
                 response["last_sample"] = dead
+                # Both figures, because they are not the same number and only memory.current is what the kernel
+                # compares to the limit - quoting heap alone would hide the reclaimable page cache behind it.
                 response["step"] = response["message"] = (
                     f"Killed mid-task at {meta.get('progress', 0)}% ({meta.get('step')}): the worker's last "
-                    f"reading before the restart was {used}MB of {dead.get('limit_mb', '?')}MB "
-                    f"({dead.get('anon_mb', 0)}MB heap + {dead.get('shmem_mb', 0)}MB tmpfs). Try a shorter clip."
+                    f"reading before the restart was {used}MB heap / {dead.get('container_mb', '?')}MB total "
+                    f"of {dead.get('limit_mb', '?')}MB ({dead.get('anon_mb', 0)}MB heap + "
+                    f"{dead.get('shmem_mb', 0)}MB tmpfs). Try a shorter clip."
                 )
             else:
                 response["step"] = response["message"] = (

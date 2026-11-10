@@ -187,28 +187,28 @@ Every figure below is the container's cgroup reading (`memory.stat` `anon` again
 | Clip | Outcome on Render Free | Peak container memory |
 | --- | --- | --- |
 | 2:20 | indexed | 324 MB |
-| 2:54 | **killed mid-decode** | kernel got it before the guard did |
+| 2:54 | indexed, then **killed on a rerun minutes later** | 357 MB on the run that survived; the run that died had a last reading of 344 MB |
 | 2:57 | indexed | 388 MB |
 | 3:47 | indexed, **twice** | 304 MB and 356 MB |
 | 4:18 | **killed mid-decode** | kernel got it before the guard did |
 | 5:25 | refused before upload | — |
 | 5:40 | killed mid-decode, twice | 463 MB observed 21s into decoding, then a restart |
 
-**Read that table vertically, not top to bottom: clip length does not predict the outcome.** A 2:54 upload killed a container that had just finished a 2:57, and 3:47 completed twice while sitting *below* both a 2:54 and a 4:18 in length ordering. `tmpfs` is not the explanation (`container_shmem_mb` reads 0 — the gap between the container total and `anon` is reclaimable page cache), and neither is the decoded audio, which is only ~11 MB for a 3-minute clip. The strongest signal is what the gateway was already holding when the worker started — a container that just served ChromaDB queries has less room than a freshly woken one — plus a run-to-run spread of ~50 MB on the *same* clip.
+**The 2:54 row is the whole finding.** Same file, same build, minutes apart: one upload finished at 357 MB, the next was SIGKILLed after a heartbeat reading of 344 MB. Clip length cannot explain that, and neither can `tmpfs` (`container_shmem_mb` reads 0; the gap between the container total and `anon` is reclaimable page cache) nor the decoded audio itself (~11 MB for 2:54). What it isolates is a **single uninterruptible allocation**: `model.transcribe()` decodes the whole file and builds its features before it yields its first segment, no heartbeat and no abort flag can run inside that stretch, and the container that died had **168 MB free** when it entered it. So that step is now measured to need *more than 168 MB* — and **what it is, still isn't known.** Four formulas were fitted to these peaks during development and all four were falsified by the next upload, so the number below is a lower bound from one kill, not a distribution.
 
-**What drives the peak is still unidentified.** Three formulas were fitted to these numbers during development and all three were falsified by the next upload, so nothing below extrapolates. Treat every length in this README as a measured data point, not a boundary.
+That reframes the question. Whether an upload survives is not "is this clip short enough" but "how full was the shared container at the second the worker started decoding" — and unlike clip length, that is observable at the moment of decision. `WHISPER_PREYIELD_SPIKE_MB` (170) is the free-memory floor the worker checks immediately before the uninterruptible step: **a cold container takes the clip, a warm one refuses it before decoding a byte**, with an error that says which. The same 2:54 file is therefore accepted or refused depending on the container, which is the point.
 
-The enforced cap is therefore a **risk choice, not a verified safe length**. `MAX_VERIFIED_VIDEO_SECONDS=150` (2:30) sits below the shortest run that has ever died. That is not the same as "safe": 2:57 peaked at 388 MB of 512 MB, so ~124 MB of headroom has already proven insufficient once. The cap exists to make the bad case rarer and the failure legible, and lowering it further is the only free-tier knob that changes the odds.
+The length clamp stays as the outer bound, but it is a **risk choice, not a verified safe length**. `MAX_VERIFIED_VIDEO_SECONDS=150` (2:30) sits below the shortest run that has ever died; that is its entire justification, and 388 MB of a 512 MB budget has already been reached by a *success*.
 
 What enforces it, cheapest failure first:
 
 1. **In the browser**, before the file leaves disk: the frontend reads `worker.max_video_seconds` from `GET /` and refuses over-length uploads outright.
 2. **In the worker**, after audio extraction: `MAX_VERIFIED_VIDEO_SECONDS` clamps the cap, and an affordability check refuses when the memory the gateway currently holds plus the Whisper load would exceed the container. Raising `MAX_VIDEO_SECONDS` in the dashboard cannot bypass either.
-3. **Mid-decode**, a tripwire aborts the task at 440 MB of 512 MB as a readable error instead of waiting for the kernel's SIGKILL — which used to mean a Render OOM email and a progress bar frozen at 45% forever.
-4. **After a kill**, the gateway notices that the task's last heartbeat predates its own boot, and reports *"Killed mid-task at 44% (…): the worker's last reading before the restart was XMB of 512MB"*. The number travels inside the Celery heartbeat itself — an earlier version wrote it to a separate Redis key and to a local file, and both silently failed to report the exact runs they existed to measure.
+3. **Immediately before decoding**, once the weights are resident: the worker compares the container's free memory against the measured pre-yield spike and refuses as a readable error if the headroom is smaller. This is the guard that covers the window nothing else can interrupt.
+4. **Mid-decode**, a tripwire aborts the task at 440 MB of 512 MB as a readable error instead of waiting for the kernel's SIGKILL — which used to mean a Render OOM email and a progress bar frozen at 45% forever.
+5. **After a kill**, the gateway notices that the task's last heartbeat predates its own boot, and reports *"Killed mid-task at 45% (…): the worker's last reading before the restart was XMB heap / YMB total of 512MB"*. The number travels inside the Celery heartbeat itself — an earlier version wrote it to a separate Redis key and then to a local file, and both silently failed to report the exact runs they existed to measure.
 
-**Known gap:** Step 3 cannot fire inside `model.transcribe()`'s pre-yield work, where the task thread never returns to re-read the abort flag — which is where all three observed kills happened. A heartbeat is now emitted immediately before that call specifically so the death-adjacent memory reading survives; the load/decode split (`weights N MB on top of M MB pre-load`) ships in the completion line so the next few runs can say whether the growth is the model or the audio.
-
+**Known gap:** step 3 refuses *before* the pre-yield step; it still cannot stop one already in progress, and step 4 cannot reach inside it either. What changed is that the entry condition is now checked against a measured number, and the reading from the last moment before the window survives the death (step 5) — which is how the 168 MB above was obtained.
 
 `GET /` exposes the whole breakdown (`api_memory`: `container_anon_mb`, `container_shmem_mb`, `cgroup_gap_mb`, `limit_mb`) and the upload progress line shows the live figure, so this is all measurable without shell access or log filtering.
 

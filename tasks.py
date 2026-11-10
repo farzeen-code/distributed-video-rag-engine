@@ -151,17 +151,27 @@ def log_memory(stage: str):
     )
     return mem
 
-WHISPER_LOAD_COST_MB = int(os.environ.get("WHISPER_LOAD_COST_MB", "150"))
+# Measured, not estimated: the completion line reports the anon delta across get_whisper_model(), and the first
+# run that reported it put tiny.en INT8 at 75MB. The 150 previously here was a single post-load sample read
+# against an idle-worker baseline, and it double-charged every affordability check that ran.
+WHISPER_LOAD_COST_MB = int(os.environ.get("WHISPER_LOAD_COST_MB", "75"))
 WHISPER_DECODE_MB_PER_MINUTE = int(os.environ.get("WHISPER_DECODE_MB_PER_MINUTE", "5"))
 
-# Three formulas have now been fitted to noisy peaks and falsified by a Render OOM email, so this does NOT
-# extrapolate. Observed peaks: 2:20 -> 324MB, 3:47 -> 304MB and 356MB (twice), 2:57 -> 388MB. Killed: 2:54,
-# 4:18, 5:40. Duration does not order these - a 3:47 finished twice while a 2:54 died, and a clip 50s shorter
-# than 3:47 peaked 32MB higher - so the driver is something this project has not identified, and no length is
-# safe in the measured sense. The number below is a judgment call, not a computation: it trades the worst
-# continuous-use experience for a shorter upload limit, and the tripwire plus the heartbeat-carried memory
-# reading are what actually report the edge. Lowering this is the only free-tier knob that changes the odds;
-# raising it back is one dashboard variable.
+# The one term that actually kills, now separated from everything else by a heartbeat that survived the death.
+# A 2:54 upload was read at 344MB of 512MB, 168MB free, and was then SIGKILLed inside model.transcribe()'s
+# pre-yield work - whole-file decode plus mel, the stretch where no heartbeat and no tripwire can run. So that
+# one uninterruptible step needs MORE than 168MB. It is a single observation, so 170 is a lower bound with one
+# sample behind it, not a distribution: nothing about it extrapolates, and the number is here to be tightened
+# by the next kill rather than defended. Nothing in the documented decode math accounts for a jump this size
+# (the audio array for 2:54 is ~11.5MB), so the magnitude is measured and the cause is still unidentified.
+WHISPER_PREYIELD_SPIKE_MB = int(os.environ.get("WHISPER_PREYIELD_SPIKE_MB", "170"))
+
+# Four formulas have now been fitted to noisy peaks and falsified by a Render OOM email, so this does NOT
+# extrapolate. Observed peaks: 2:20 -> 324MB, 2:54 -> 357MB and KILLED, 2:57 -> 388MB, 3:47 -> 304MB and 356MB
+# (twice). Killed: 2:54, 4:18, 5:40. Duration does not order these - one build of one clip both finished and
+# died minutes apart - which is what the spike term above explains: the outcome depends on how much the shared
+# container was already holding when an uninterruptible ~170MB step fired, not on the length of the clip.
+# That term is checked live at the last point before the step, so this clamp is only the outer bound.
 MAX_VERIFIED_VIDEO_SECONDS = int(os.environ.get("MAX_VERIFIED_VIDEO_SECONDS", "150"))
 
 # Self-imposed tripwire. Render's SIGKILL takes the worker, the queued task and the API with it, and leaves
@@ -339,6 +349,20 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         # during that stretch - and both observed container kills happened inside it. This is therefore the
         # last memory reading a ghost run can carry, which makes it the most valuable write in the task.
         report(44, f"Whisper resident at {used_memory_mb(at_load)}MB of {at_load['limit_mb']}MB, decoding audio")
+
+        # The last check that can still act before the step nothing can interrupt. This is a statement about
+        # this container at this second, not about the clip: the same 2:54 file indexes on a cold box and is
+        # refused here on a warm one, which is the difference between a fixed cap and a predictable failure.
+        free_mb = at_load["limit_mb"] - used_memory_mb(at_load)
+        if at_load["limit_mb"] and free_mb < WHISPER_PREYIELD_SPIKE_MB:
+            raise ValueError(
+                f"Refused before decoding: this container has {free_mb}MB free of {at_load['limit_mb']}MB and "
+                f"Whisper's first step is measured to need at least {WHISPER_PREYIELD_SPIKE_MB}MB as one "
+                "uninterruptible allocation. Nothing is wrong with this clip - it processes fine when the "
+                "container is emptier. The memory is what the gateway is holding from recent queries, and it "
+                "only comes back when the service restarts, so either try again after it has been idle long "
+                "enough to sleep (Render Free does that in ~15 minutes) or upload a shorter clip."
+            )
         try:
             segments = transcribe_video_audio(audio_path, progress_callback=update_whisper_progress, progress_start=45, progress_end=75)
         finally:
