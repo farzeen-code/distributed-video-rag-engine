@@ -27,8 +27,8 @@ Invokes an uncompressed PCM 16-bit WAV conversion (`-ar 16000 -ac 1 -vn`) via Py
 
 ### 3. 🧠 INT8 Quantized Local Speech Recognition (`faster-whisper`)
 Utilizes `faster-whisper` on CTranslate2 CPU engine with **INT8 quantization**:
-- Slashed RAM footprint by **70%** and boosted inference speed by **4x** compared to vanilla PyTorch Whisper.
-- Auto-detects spoken languages (99 languages supported) with confidence scoring.
+- INT8 was picked for the memory envelope, not from a benchmark: this container has 512 MB shared with the API. Measured here — loading `tiny.en` costs **~130-150 MB** of non-reclaimable memory, and a 3:47 clip peaks at **356 MB**. The widely quoted ~70% RAM / 4x speed figures versus vanilla PyTorch Whisper were **never measured on this stack** and are not claimed as results.
+- Auto-detect is wired up (`language=None`), but the shipped checkpoint is **`tiny.en`, an English-only model** — "99 languages" belongs to the multilingual checkpoints. Non-English audio needs a different `WHISPER_MODEL_SIZE`, and setting `WHISPER_LANGUAGE` skips the detection pass entirely.
 - Generates precise segment-level timestamps (`[01:15 - 01:45]`).
 
 ### 4. ⏱️ Temporal Citation Prompt Engineering
@@ -36,12 +36,14 @@ Video transcript segments are indexed into ChromaDB with explicit inline timesta
 > *"At [04:12 - 04:35], the speaker explains B-Trees..."*
 Allows users to scrub directly to the exact moment in the video.
 
-### 5. 🐳 Microservice Container Topology (Docker Compose)
-Orchestrates 3 isolated containers over a private internal bridge network:
+### 5. 🐳 Container Topology (Docker Compose)
+Locally this is 3 containers over a private internal bridge network:
 1. `rag_api_backend`: FastAPI Gateway
 2. `rag_redis`: Redis 7 Broker
 3. `rag_celery_worker`: Celery Worker with pre-cached Whisper & Chroma models
 Uses volume mounts (`./storage`, `./chroma_db`) for shared host disk access.
+
+On Render Free the same image runs **one** container whose `start.sh` starts the gateway and the worker as two processes, because the tier has no free worker instance — so they share one 512 MB cgroup, which is the constraint the whole [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work) section is about. "Microservice" here means decoupled *processes and queues*, not separately scheduled machines.
 
 ---
 
@@ -60,7 +62,7 @@ graph TD
     Audio --> Whisper[faster-whisper INT8 CPU Engine]
     
     Whisper -->|6. Timestamped Segments| Chunker[Timestamp Chunk Formatter]
-    Chunker --> Embedder[ONNX Runtime: all-MiniLM-L6-v2]
+    Chunker --> Embedder[Google Gemini Embeddings: gemini-embedding-001]
     Embedder --> Chroma[(ChromaDB Persistent Vector Store)]
     
     Client -->|GET /tasks/task_id| API
@@ -84,9 +86,9 @@ graph TD
 | **Media Processing** | **FFmpeg** | Binary subprocess audio extraction (16kHz mono WAV) |
 | **Speech Recognition** | **faster-whisper** | INT8 CTranslate2 CPU model for timestamped transcription |
 | **Vector Database** | **ChromaDB** | Local persistent dense vector database |
-| **Embedding Engine** | **ONNX Runtime** | `all-MiniLM-L6-v2` dense vectors (384-dimensional) |
+| **Embedding Model** | **Google Gemini** | Cloud-based `gemini-embedding-001` (768 dimensions), called from `embeddings.py` |
 | **LLM Inference** | **Google GenAI SDK** | Resilient Gemini Flash-Lite citation engine |
-| **Containerization** | **Docker & Docker Compose** | Multi-container microservice orchestration |
+| **Containerization** | **Docker & Docker Compose** | 3 services locally; Render Free runs gateway + worker as 2 processes in 1 container |
 
 ---
 
