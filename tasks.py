@@ -172,7 +172,9 @@ WHISPER_PREYIELD_SPIKE_MB = int(os.environ.get("WHISPER_PREYIELD_SPIKE_MB", "170
 # died minutes apart - which is what the spike term above explains: the outcome depends on how much the shared
 # container was already holding when an uninterruptible ~170MB step fired, not on the length of the clip.
 # That term is checked live at the last point before the step, so this clamp is only the outer bound.
-MAX_VERIFIED_VIDEO_SECONDS = int(os.environ.get("MAX_VERIFIED_VIDEO_SECONDS", "150"))
+# At 3:00 the bound is deliberately above a measured death (2:54), which is only defensible because the
+# headroom guard decides per container state; a cold box has ~350MB free and a warm one does not.
+MAX_VERIFIED_VIDEO_SECONDS = int(os.environ.get("MAX_VERIFIED_VIDEO_SECONDS", "180"))
 
 # Self-imposed tripwire. Render's SIGKILL takes the worker, the queued task and the API with it, and leaves
 # a ghost frozen at the last heartbeat plus an email. Aborting one notch below the limit turns the same
@@ -302,7 +304,7 @@ def process_video_task(self, video_path: str, original_filename: str):   #self: 
         audio_seconds = get_audio_duration(audio_path)
         # Clamped by the verified ceiling so raising MAX_VIDEO_SECONDS in the dashboard refuses uploads in
         # the worker instead of routing them into a container kill.
-        max_seconds = min(int(os.environ.get("MAX_VIDEO_SECONDS", "150")), MAX_VERIFIED_VIDEO_SECONDS)
+        max_seconds = min(int(os.environ.get("MAX_VIDEO_SECONDS", "180")), MAX_VERIFIED_VIDEO_SECONDS)
         if audio_seconds > max_seconds:
             cap = f"{max_seconds / 60:.1f} minutes" if max_seconds >= 60 else f"{max_seconds} seconds"
             raise ValueError(

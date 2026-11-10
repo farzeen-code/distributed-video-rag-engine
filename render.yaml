@@ -16,13 +16,13 @@ services:
       - key: WHISPER_CPU_THREADS
         value: "1"
       - key: MAX_VIDEO_SECONDS
-        value: "150"
+        value: "180"
       # Hard clamp on both the advertised cap and the worker's guard. Raising MAX_VIDEO_SECONDS above this
-      # no longer lets a clip through. This is deliberately below the longest run ever completed here (3:47,
-      # twice) because a 2:54 clip killed a container that had just finished a 2:57 - length does not
-      # predict the peak, so this is a risk choice, and lowering it is the only free-tier knob that helps.
+      # no longer lets a clip through. 3:00 is above a measured death (a 2:54 was killed once and indexed
+      # fine minutes earlier), which the length cannot decide - WHISPER_PREYIELD_SPIKE_MB is what refuses a
+      # warm container, and this clamp only bounds the longest clips this deployment ever attempts.
       - key: MAX_VERIFIED_VIDEO_SECONDS
-        value: "150"
+        value: "180"
       - key: WHISPER_ABORT_ANON_MB
         value: "440"
       # Measured across get_whisper_model() by the upload completion line.

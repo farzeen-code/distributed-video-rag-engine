@@ -8,7 +8,7 @@
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-FF6600?style=for-the-badge)](https://www.trychroma.com/)
 [![Whisper](https://img.shields.io/badge/OpenAI%20Whisper-000000?style=for-the-badge&logo=openai&logoColor=white)](https://github.com/openai/whisper)
 
-A **Multimodal Retrieval-Augmented Generation (RAG) Engine** built to run entirely on free-tier infrastructure, capable of processing PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`) — **capped at 2:30 on Render Free, with every limit measured rather than assumed; see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)**. 
+A **Multimodal Retrieval-Augmented Generation (RAG) Engine** built to run entirely on free-tier infrastructure, capable of processing PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`) — **up to 3:00 on Render Free, with every limit measured rather than assumed; see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)**. 
 
 Features an asynchronous event-driven worker queue (**Redis + Celery**), **FFmpeg** audio extraction, **INT8 quantized faster-whisper** transcription, **Google Gemini 768-dim embeddings**, persistent **ChromaDB** vector storage, and **Gemini Flash** temporal citation Q&A (`[MM:SS]`).
 
@@ -25,7 +25,7 @@ Heavy video processing runs outside the request path so the API stays responsive
 The isolation is by *process*, not by machine: `start.sh` runs the gateway and the worker inside one container, so they still share a single memory budget — which is what actually bounds video length (see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)). "Microservice" in this deployed demo means decoupled processes and queues, not separate physical host instances.
 
 ### 2. 🎧 16kHz Mono Audio Extraction via FFmpeg Subprocess
-Invokes an uncompressed PCM 16-bit WAV conversion (`-ar 16000 -ac 1 -vn`) via Python `subprocess`. Converting stereo/48kHz audio to 16kHz mono cuts raw audio data size by **50%** and eliminates CPU decoding overhead for the AI model.
+Invokes an uncompressed PCM 16-bit WAV conversion (`-vn -acodec pcm_s16le -ar 16000 -ac 1`) via Python `subprocess`. 16kHz mono is Whisper's own input format, so the model resamples nothing; against 48kHz stereo PCM the audio handed over is ~6x smaller, though it is uncompressed, which is the trade the extraction makes.
 
 ### 3. 🧠 INT8 Quantized Local Speech Recognition (`faster-whisper`)
 Utilizes `faster-whisper` on CTranslate2 CPU engine with **INT8 quantization**:
@@ -35,7 +35,7 @@ Utilizes `faster-whisper` on CTranslate2 CPU engine with **INT8 quantization**:
 - Voice Activity Detection (VAD) filter is explicitly disabled (`vad_filter=False`) in code to avoid loading Silero's ~80 MB ONNX runtime into the memory-constrained container.
 
 ### 4. ☁️ Zero-RAM Cloud Vector Embeddings
-Local embedding models (`all-MiniLM-L6-v2`) were completely replaced with **Google Gemini Embeddings (`gemini-embedding-001`, 768 dimensions)**. This eliminated ONNX Runtime and local neural net weights from the container, freeing ~160 MB of memory for Whisper inference.
+Local embedding models (`all-MiniLM-L6-v2`) were completely replaced with **Google Gemini Embeddings (`gemini-embedding-001`, 768 dimensions)**. This eliminated ONNX Runtime and local neural net weights from the container. The memory it released was never isolated on its own — it is folded into the container peaks below, which are measured after the change.
 
 ### 5. ⏱️ Temporal Citation Prompt Engineering
 Video transcript segments are indexed into ChromaDB with explicit inline timestamp markers. Gemini is governed by strict citation rules:
@@ -43,11 +43,11 @@ Video transcript segments are indexed into ChromaDB with explicit inline timesta
 Allows users to scrub directly to the exact moment in the video.
 
 ### 6. 🐳 Container Topology (Docker Compose)
-Orchestrates 3 isolated services locally over a private internal bridge network:
-1. `rag_api_backend`: FastAPI Gateway
-2. `rag_redis`: Redis 7 Broker
-3. `rag_celery_worker`: Celery Worker with pre-cached Whisper models
-Uses volume mounts (`./storage`, `./chroma_db`) for shared host disk access.
+Orchestrates 3 services locally (`docker-compose.yml`):
+1. `rag-backend`: FastAPI Gateway
+2. `redis`: Redis 7 Broker
+3. `celery-worker`: Celery Worker with pre-cached Whisper models
+Uses volume mounts (`./storage`, `./chroma_db`) for shared host disk access. On Render the same two Python processes run inside **one** service instead, which is why the deployed memory budget is shared and the local topology is not representative of it.
 
 ---
 
@@ -70,7 +70,7 @@ graph TD
     Embedder --> Chroma[(ChromaDB docai_v2 Persistent Store)]
     
     Client -->|GET /tasks/task_id| API
-    API -->|Poll Status: 15% -> 40% -> 100%| Redis
+    API -->|Poll Status: 38% - 44% - 80% - 100%| Redis
     
     Client -->|POST /query| API
     API --> Chroma
@@ -180,7 +180,7 @@ Access the interactive API documentation at: **`http://localhost:8000/docs`**
 
 ## ⚖️ Free-Tier Limits — What Video Lengths Actually Work
 
-Video ingestion is bounded by RAM, not by code. `start.sh` runs the FastAPI gateway and the Celery worker as **two Python processes inside one container**, so they share Render Free's single **512 MB** budget, and its **0.1 vCPU** sets the transcription speed (~10 minutes of wall clock for a 4-minute clip).
+Video ingestion is bounded by RAM, not by code. `start.sh` runs the FastAPI gateway and the Celery worker as **two Python processes inside one container**, so they share Render Free's single **512 MB** budget, and its **0.1 vCPU** sets the transcription speed (~10 minutes of wall clock for a 4-minute clip). What that budget is spent on is the subject of this section, and it took four wrong answers to pin down.
 
 Every figure below is the container's cgroup reading (`memory.stat` `anon` against `memory.max`), reported by the app itself at the end of each upload — not a per-process RSS estimate and not a model.
 
@@ -198,7 +198,7 @@ Every figure below is the container's cgroup reading (`memory.stat` `anon` again
 
 That reframes the question. Whether an upload survives is not "is this clip short enough" but "how full was the shared container at the second the worker started decoding" — and unlike clip length, that is observable at the moment of decision. `WHISPER_PREYIELD_SPIKE_MB` (170) is the free-memory floor the worker checks immediately before the uninterruptible step: **a cold container takes the clip, a warm one refuses it before decoding a byte**, with an error that says which. The same 2:54 file is therefore accepted or refused depending on the container, which is the point.
 
-The length clamp stays as the outer bound, but it is a **risk choice, not a verified safe length**. `MAX_VERIFIED_VIDEO_SECONDS=150` (2:30) sits below the shortest run that has ever died; that is its entire justification, and 388 MB of a 512 MB budget has already been reached by a *success*.
+The length clamp is the outer bound, not a safety promise. `MAX_VERIFIED_VIDEO_SECONDS=180` (3:00) deliberately sits *above* a measured death — a 2:54 was killed once and indexed fine minutes earlier — because length is not what decides the outcome. What decides it is the headroom check in step 3 below: a cold container has ~350 MB free and takes the clip, a warm one is refused before it decodes anything. So 3:00 is the longest clip this deployment attempts, and whether any given upload survives depends on the container, not on the file.
 
 What enforces it, cheapest failure first:
 
@@ -216,7 +216,7 @@ What enforces it, cheapest failure first:
 
 PDF and DOCX ingestion is unaffected — no FFmpeg, no Whisper, parsed in the request path.
 
-The ceiling is a single deployment variable, reported live: `GET /` returns `worker.max_video_seconds`, and the frontend reads it when the upload drawer opens, so changing `MAX_VERIFIED_VIDEO_SECONDS` in the Render dashboard takes effect without touching frontend code. Transcription speed is the other bound — a 4-minute clip takes ~10 minutes of wall clock on 0.1 vCPU, and `CELERY_TASK_SOFT_TIME_LIMIT` (default 1800s) fails a task cleanly long before it can spin forever, so raise both together. The honest reading of the table above is that **this tier has no defensible length limit at all** — the shortest upload that has ever died was under 3 minutes — so the cap is a bet on variance rather than a boundary. What is *not* a bet: the same image runs unchanged on a machine with a real CPU and 2 GB+ RAM (`docker compose up --build`), where the length limit stops being interesting — noting that `chroma_db/` is a local persistent store, so that is a different index, not the deployed one.
+The cap is a single deployment variable, reported live: `GET /` returns `worker.max_video_seconds`, and the frontend reads it when the upload drawer opens, so changing `MAX_VERIFIED_VIDEO_SECONDS` in the Render dashboard takes effect without touching frontend code. Transcription speed is the other bound — a 4-minute clip takes ~10 minutes of wall clock on 0.1 vCPU, and `CELERY_TASK_SOFT_TIME_LIMIT` (default 1800s) fails a task cleanly long before it can spin forever, so raise both together. The position this landed in is honest rather than reassuring: **no clip length is safe on this tier, because length does not determine the outcome** — the shortest upload that has ever died was under 3 minutes. What is defensible is refusing on measured headroom instead of guessing on duration, so a busy container says no in words rather than dying in a restart. Nothing here is a guarantee, and the table above is data, not a boundary. What *is* settled: the same image runs unchanged on a machine with a real CPU and 2 GB+ RAM (`docker compose up --build`), where the length limit stops being interesting — noting that `chroma_db/` is a local persistent store, so that is a different index, not the deployed one.
 
 ---
 

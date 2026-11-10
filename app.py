@@ -49,7 +49,7 @@ app = FastAPI(title="RAG Document Q&A", lifespan=lifespan)
 
 @app.get("/")
 def health_check():
-    configured = int(os.environ.get("MAX_VIDEO_SECONDS", "150"))
+    configured = int(os.environ.get("MAX_VIDEO_SECONDS", "180"))
     # Never advertise above what has actually completed here, however much headroom this reading shows.
     verified = MAX_VERIFIED_VIDEO_SECONDS
     affordable = affordable_video_seconds(margin_mb=WHISPER_ADVERTISE_MARGIN_MB)
