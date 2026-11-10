@@ -6,9 +6,9 @@
 [![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![Google Gemini](https://img.shields.io/badge/Google%20Gemini-8E75B2?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-FF6600?style=for-the-badge)](https://www.trychroma.com/)
-[![Whisper](https://img.shields.io/badge/OpenAI%20Whisper-000000?style=for-the-badge&logo=openai&logoColor=white)](https://github.com/openai/whisper)
+[![faster-whisper](https://img.shields.io/badge/faster--whisper-CTranslate2-blue?style=for-the-badge)](https://github.com/SYSTRAN/faster-whisper)
 
-A **Multimodal Retrieval-Augmented Generation (RAG) Engine** built to run entirely on free-tier infrastructure, capable of processing PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`) — **up to 3:00 on Render Free, with every limit measured rather than assumed; see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work)**. 
+A **Multimodal Retrieval-Augmented Generation (RAG) Engine** built to run entirely on free-tier infrastructure, capable of processing PDF/DOCX documents as well as video uploads (`.mp4`, `.mkv`, `.webm`) — **attempting up to 3:00 on Render Free (not a guarantee; every limit measured rather than assumed — see [Free-Tier Limits](#-free-tier-limits--what-video-lengths-actually-work))**.
 
 Features an asynchronous event-driven worker queue (**Redis + Celery**), **FFmpeg** audio extraction, **INT8 quantized faster-whisper** transcription, **Google Gemini 768-dim embeddings**, persistent **ChromaDB** vector storage, and **Gemini Flash** temporal citation Q&A (`[MM:SS]`).
 
@@ -165,8 +165,12 @@ Queries indexed document and video knowledge base.
 git clone https://github.com/farzeen-code/distributed-video-rag-engine.git
 cd distributed-video-rag-engine
 
-# Create .env file
-echo "GEMINI_API_KEY=your_gemini_api_key_here" > .env
+# Create .env file — all three keys are required
+cat > .env << 'EOF'
+GEMINI_API_KEY=your_gemini_api_key_here
+MONGODB_URI=your_mongodb_atlas_connection_string
+REDIS_URL=your_upstash_redis_url_with_rediss_prefix
+EOF
 ```
 
 ### 2. Boot the Cluster
@@ -180,7 +184,7 @@ Access the interactive API documentation at: **`http://localhost:8000/docs`**
 
 ## ⚖️ Free-Tier Limits — What Video Lengths Actually Work
 
-Video ingestion is bounded by RAM, not by code. `start.sh` runs the FastAPI gateway and the Celery worker as **two Python processes inside one container**, so they share Render Free's single **512 MB** budget, and its **0.1 vCPU** sets the transcription speed (~10 minutes of wall clock for a 4-minute clip). What that budget is spent on is the subject of this section, and it took four wrong answers to pin down.
+Video ingestion is bounded by RAM, not by code. `start.sh` runs the FastAPI gateway and the Celery worker as **two Python processes inside one container**, so they share Render Free's single **512 MB** budget, and its **0.1 vCPU** sets the transcription speed (~10 minutes of wall clock for a 3–4 minute clip). What that budget is spent on is the subject of this section, and it took four wrong answers to pin down.
 
 Every figure below is the container's cgroup reading (`memory.stat` `anon` against `memory.max`), reported by the app itself at the end of each upload — not a per-process RSS estimate and not a model.
 
@@ -189,7 +193,7 @@ Every figure below is the container's cgroup reading (`memory.stat` `anon` again
 | 2:20 | indexed | 324 MB |
 | 2:54 | indexed, then **killed on a rerun minutes later** | 357 MB on the run that survived; the run that died had a last reading of 344 MB |
 | 2:57 | indexed | 388 MB |
-| 3:47 | indexed, **twice** | 304 MB and 356 MB |
+| 3:47 | indexed, **twice** *(pre-cap; cap now 3:00)* | 304 MB and 356 MB |
 | 4:18 | **killed mid-decode** | kernel got it before the guard did |
 | 5:25 | refused before upload | — |
 | 5:40 | killed mid-decode, twice | 463 MB observed 21s into decoding, then a restart |
